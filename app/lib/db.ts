@@ -1,49 +1,58 @@
-import fs from "fs";
-import path from "path";
+import { Resend } from "resend";
 
-const DB_PATH = path.join(process.cwd(), "data", "waitlist.json");
+const resend = new Resend(process.env.RESEND_API_KEY);
+const AUDIENCE_ID = process.env.RESEND_AUDIENCE_ID!;
 
-interface WaitlistEntry {
-  email: string;
-  joinedAt: string;
-}
+export async function addEmail(
+  email: string
+): Promise<{ success: boolean; alreadyExists: boolean }> {
+  const normalized = email.toLowerCase().trim();
 
-function ensureDbExists() {
-  const dir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  if (!fs.existsSync(DB_PATH)) {
-    fs.writeFileSync(DB_PATH, JSON.stringify({ emails: [] }, null, 2));
-  }
-}
+  // Check for existing contact first
+  const { data: list } = await resend.contacts.list({ audienceId: AUDIENCE_ID });
+  const contacts = (list as any)?.data ?? [];
+  const exists = contacts.some(
+    (c: { email: string }) => c.email.toLowerCase() === normalized
+  );
+  if (exists) return { success: false, alreadyExists: true };
 
-export function getAllEmails(): WaitlistEntry[] {
-  ensureDbExists();
-  const raw = fs.readFileSync(DB_PATH, "utf-8");
-  const db = JSON.parse(raw);
-  return db.emails as WaitlistEntry[];
-}
+  const { error } = await resend.contacts.create({
+    audienceId: AUDIENCE_ID,
+    email: normalized,
+    unsubscribed: false,
+  });
 
-export function addEmail(email: string): { success: boolean; alreadyExists: boolean } {
-  ensureDbExists();
-  const raw = fs.readFileSync(DB_PATH, "utf-8");
-  const db = JSON.parse(raw);
-  const emails: WaitlistEntry[] = db.emails;
+  if (error) throw new Error((error as any).message ?? "Resend error");
 
-  const exists = emails.some((e) => e.email.toLowerCase() === email.toLowerCase());
-  if (exists) {
-    return { success: false, alreadyExists: true };
-  }
+  // Send welcome email
+  await resend.emails.send({
+    from: "RentInDex <hello@rentindex.com.ng>",
+    to: normalized,
+    subject: "You're on the RentInDex waitlist!",
+    html: `
+      <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px">
+        <h2 style="color:#1a1a1a">You're in. 🎉</h2>
+        <p style="color:#444;line-height:1.6">
+          Thanks for joining the RentInDex waitlist. We're building Nigeria's first
+          rent intelligence platform — starting in Abuja — so you never get
+          overcharged on rent again.
+        </p>
+        <p style="color:#444;line-height:1.6">
+          We'll send you an early-access invite the moment we launch. Tell a friend
+          who's house-hunting — the more people use it, the smarter the data gets.
+        </p>
+        <p style="color:#888;font-size:13px;margin-top:32px">
+          — The RentInDex team · Powered by Smat Concept
+        </p>
+      </div>
+    `,
+  });
 
-  emails.push({ email: email.toLowerCase(), joinedAt: new Date().toISOString() });
-  fs.writeFileSync(DB_PATH, JSON.stringify({ emails }, null, 2));
   return { success: true, alreadyExists: false };
 }
 
-export function getCount(): number {
-  ensureDbExists();
-  const raw = fs.readFileSync(DB_PATH, "utf-8");
-  const db = JSON.parse(raw);
-  return (db.emails as WaitlistEntry[]).length;
+export async function getCount(): Promise<number> {
+  const { data: list } = await resend.contacts.list({ audienceId: AUDIENCE_ID });
+  const contacts = (list as any)?.data ?? [];
+  return contacts.length;
 }

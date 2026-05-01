@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = addEmail(email.trim());
+    const result = await addEmail(email.trim());
 
     if (result.alreadyExists) {
       return NextResponse.json(
@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const count = getCount();
+    const count = await getCount();
 
     return NextResponse.json(
       {
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
-    const count = getCount();
+    const count = await getCount();
     return NextResponse.json({ count }, { status: 200 });
   } catch {
     return NextResponse.json({ error: "Could not fetch count." }, { status: 500 });
