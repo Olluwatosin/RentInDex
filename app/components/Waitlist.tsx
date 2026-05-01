@@ -79,7 +79,7 @@ export default function Waitlist() {
               </div>
               <div>
                 <p className="text-gray-900 font-semibold text-sm">
-                  Join 17+ Nigerians already on the waitlist
+                  Join 100+ Nigerians already on the waitlist
                 </p>
                 <p className="text-gray-400 text-xs">Growing every day</p>
               </div>

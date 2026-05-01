@@ -7,7 +7,7 @@ const GOOGLE_FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLScnKYPOeajElWeapoxLw1ZP7dKEvpqeUb-NwzIw61kKqq0YOQ/viewform";
 
 const stats = [
-  { value: "17+", label: "on the waitlist" },
+  { value: "100+", label: "on the waitlist" },
   { value: "Abuja", label: "launching first" },
   { value: "40-50%", label: "hidden fee inflation" },
 ];
