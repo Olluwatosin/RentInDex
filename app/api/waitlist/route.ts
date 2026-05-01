@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { addEmail, getCount } from "@/app/lib/db";
+import { Resend } from "resend";
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,21 +20,45 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const result = await addEmail(email.trim());
+    const normalized = email.trim().toLowerCase();
 
-    if (result.alreadyExists) {
-      return NextResponse.json(
-        { message: "You're already on the waitlist! We'll be in touch soon." },
-        { status: 200 }
-      );
-    }
+    // Notify owner of new signup
+    await resend.emails.send({
+      from: "RentInDex <onboarding@resend.dev>",
+      to: "salamimuhydeen76@gmail.com",
+      subject: `New waitlist signup: ${normalized}`,
+      html: `<p><strong>${normalized}</strong> just joined the RentInDex waitlist.</p>`,
+    });
 
-    const count = await getCount();
+    // Send confirmation to subscriber (best-effort)
+    resend.emails.send({
+      from: "RentInDex <onboarding@resend.dev>",
+      to: normalized,
+      subject: "You're on the RentInDex waitlist!",
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px">
+          <h2 style="color:#1a1a1a">You're in!</h2>
+          <p style="color:#444;line-height:1.6">
+            Thanks for joining the RentInDex waitlist. We're building Nigeria's first
+            rent intelligence platform — starting in Abuja — so you never get
+            overcharged on rent again.
+          </p>
+          <p style="color:#444;line-height:1.6">
+            We'll send you an early-access invite the moment we launch.
+          </p>
+          <p style="color:#888;font-size:13px;margin-top:32px">
+            — The RentInDex team · Powered by Smat Concept
+          </p>
+        </div>
+      `,
+    }).catch(() => {
+      // Subscriber confirmation is best-effort; don't fail the request
+    });
 
     return NextResponse.json(
       {
-        message: `You're on the list! You're #${count} on the RentInDex waitlist. We'll notify you first when we launch in Abuja.`,
-        count,
+        message:
+          "You're on the list! We'll notify you first when we launch in Abuja.",
       },
       { status: 201 }
     );
@@ -46,10 +72,5 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  try {
-    const count = await getCount();
-    return NextResponse.json({ count }, { status: 200 });
-  } catch {
-    return NextResponse.json({ error: "Could not fetch count." }, { status: 500 });
-  }
+  return NextResponse.json({ count: null }, { status: 200 });
 }
