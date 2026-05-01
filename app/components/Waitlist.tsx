@@ -120,7 +120,7 @@ export default function Waitlist() {
             animate={isInView ? { opacity: 1, x: 0 } : {}}
             transition={{ duration: 0.6, delay: 0.2 }}
           >
-            <div className="bg-gray-50 border border-gray-200 rounded-3xl p-8 sm:p-10">
+            <div className="bg-gray-50 border border-gray-200 rounded-3xl p-6 sm:p-10">
               <h3 className="text-xl font-bold text-gray-900 mb-2">
                 Join the Waitlist
               </h3>

@@ -80,16 +80,16 @@ export default function Hero() {
           }}
         />
 
-        <div className="relative max-w-6xl mx-auto px-6 pt-32 pb-24 w-full">
+        <div className="relative max-w-6xl mx-auto px-6 pt-24 sm:pt-32 pb-24 w-full">
           <div className="max-w-3xl">
             {/* Badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-2 mb-8"
+              className="inline-flex flex-wrap items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-2 mb-8"
             >
-              <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse" />
+              <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse flex-shrink-0" />
               <span className="text-white/90 text-sm font-medium">
                 Nigeria&apos;s First Rent Intelligence Platform
               </span>
@@ -173,7 +173,7 @@ export default function Hero() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.5 }}
-              className="flex flex-wrap gap-8 mt-16 pt-8 border-t border-white/20"
+              className="grid grid-cols-3 gap-4 mt-12 sm:mt-16 pt-8 border-t border-white/20"
             >
               {stats.map((stat, i) => (
                 <div key={i}>
