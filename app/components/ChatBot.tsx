@@ -62,11 +62,25 @@ export default function ChatBot() {
       });
 
       const data = await res.json();
+
+      if (!res.ok || !data.reply) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "bot",
+            content:
+              data.error ??
+              "I'm having trouble connecting right now. Please try again in a moment. 😕",
+          },
+        ]);
+        return;
+      }
+
       setMessages((prev) => [
         ...prev,
         {
           role: "bot",
-          content: data.reply ?? "Sorry, I couldn't get a response. Try again!",
+          content: data.reply,
           suggestions: data.suggestions,
         },
       ]);

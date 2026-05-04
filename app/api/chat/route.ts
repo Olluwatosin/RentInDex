@@ -45,9 +45,14 @@ async function callOpenRouter(
     }),
   });
 
-  if (!res.ok) throw new Error(`OpenRouter ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`OpenRouter ${res.status}: ${body}`);
+  }
   const data = await res.json();
-  return data.choices[0].message.content as string;
+  const content = data.choices?.[0]?.message?.content;
+  if (!content) throw new Error("Empty response from model");
+  return content as string;
 }
 
 function getSuggestions(userText: string, botReply: string): string[] {
@@ -71,7 +76,17 @@ function getSuggestions(userText: string, botReply: string): string[] {
   return ["Is my rent too high?", "Calculate my move-in cost"];
 }
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.error("OPENROUTER_API_KEY is not set");
+    return NextResponse.json(
+      { error: "API key not configured. Please contact support." },
+      { status: 500 }
+    );
+  }
+
   try {
     const { messages } = await req.json();
 
@@ -83,17 +98,27 @@ export async function POST(req: NextRequest) {
     const lastUserMessage: string = messages[messages.length - 1]?.content ?? "";
 
     let reply: string;
-    try {
-      reply = await callOpenRouter(fullMessages, "openai/gpt-4o-mini");
-    } catch {
-      reply = await callOpenRouter(fullMessages, "mistralai/mistral-7b-instruct");
+    let lastError: unknown;
+
+    for (const model of ["openai/gpt-4o-mini", "mistralai/mistral-7b-instruct"]) {
+      try {
+        reply = await callOpenRouter(fullMessages, model);
+        break;
+      } catch (err) {
+        console.error(`Model ${model} failed:`, err);
+        lastError = err;
+      }
     }
 
-    const suggestions = getSuggestions(lastUserMessage, reply);
+    if (!reply!) {
+      throw lastError ?? new Error("All models failed");
+    }
 
+    const suggestions = getSuggestions(lastUserMessage, reply!);
     return NextResponse.json({ reply, suggestions });
   } catch (err) {
-    console.error("Chat API error:", err);
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("Chat API error:", message);
     return NextResponse.json(
       { error: "Something went wrong. Please try again." },
       { status: 500 }
