@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
+import ChatBot from "@/app/components/ChatBot";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -40,6 +41,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         {children}
+        <ChatBot />
         <Analytics />
       </body>
     </html>
