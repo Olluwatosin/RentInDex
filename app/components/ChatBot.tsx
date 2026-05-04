@@ -23,6 +23,7 @@ const WELCOME: Message = {
 
 export default function ChatBot() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -227,41 +228,65 @@ export default function ChatBot() {
         )}
       </AnimatePresence>
 
-      {/* Floating button */}
-      <motion.button
-        onClick={() => setIsOpen((prev) => !prev)}
-        className="fixed bottom-6 right-4 sm:right-6 z-50 w-14 h-14 rounded-full bg-[#1B4332] shadow-lg hover:bg-[#2D6A4F] flex items-center justify-center transition-colors hover:shadow-xl"
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
-        aria-label="Open RentBot"
-      >
-        <AnimatePresence mode="wait">
-          {isOpen ? (
-            <motion.span
-              key="close"
-              initial={{ opacity: 0, rotate: -90 }}
-              animate={{ opacity: 1, rotate: 0 }}
-              exit={{ opacity: 0, rotate: 90 }}
+      {/* Floating button + hover label */}
+      <div className="fixed bottom-6 right-4 sm:right-6 z-50 flex items-center gap-3">
+        {/* "Chat with RentBot" label — slides in on hover */}
+        <AnimatePresence>
+          {isHovered && !isOpen && (
+            <motion.div
+              initial={{ opacity: 0, x: 12, scale: 0.92 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 12, scale: 0.92 }}
               transition={{ duration: 0.15 }}
+              className="bg-[#1B4332] text-white text-sm font-semibold px-4 py-2.5 rounded-full shadow-lg whitespace-nowrap pointer-events-none select-none"
             >
-              <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </motion.span>
-          ) : (
-            <motion.span
-              key="open"
-              initial={{ opacity: 0, rotate: 90 }}
-              animate={{ opacity: 1, rotate: 0 }}
-              exit={{ opacity: 0, rotate: -90 }}
-              transition={{ duration: 0.15 }}
-              className="text-2xl"
-            >
-              🏠
-            </motion.span>
+              Chat with RentBot 🏠
+            </motion.div>
           )}
         </AnimatePresence>
-      </motion.button>
+
+        <motion.button
+          onHoverStart={() => setIsHovered(true)}
+          onHoverEnd={() => setIsHovered(false)}
+          onClick={() => setIsOpen((prev) => !prev)}
+          className="relative w-14 h-14 rounded-full bg-[#1B4332] shadow-lg hover:bg-[#2D6A4F] flex items-center justify-center transition-colors hover:shadow-xl flex-shrink-0"
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.95 }}
+          aria-label="Open RentBot"
+        >
+          {/* Pulsing attention ring */}
+          {!isOpen && (
+            <span className="absolute inset-0 rounded-full bg-[#1B4332] animate-ping opacity-25" />
+          )}
+
+          <AnimatePresence mode="wait">
+            {isOpen ? (
+              <motion.span
+                key="close"
+                initial={{ opacity: 0, rotate: -90 }}
+                animate={{ opacity: 1, rotate: 0 }}
+                exit={{ opacity: 0, rotate: 90 }}
+                transition={{ duration: 0.15 }}
+              >
+                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </motion.span>
+            ) : (
+              <motion.span
+                key="open"
+                initial={{ opacity: 0, rotate: 90 }}
+                animate={{ opacity: 1, rotate: 0 }}
+                exit={{ opacity: 0, rotate: -90 }}
+                transition={{ duration: 0.15 }}
+                className="text-2xl relative z-10"
+              >
+                🏠
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
+      </div>
     </>
   );
 }
