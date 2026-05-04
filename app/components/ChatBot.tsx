@@ -9,6 +9,9 @@ interface Message {
   suggestions?: string[];
 }
 
+const GOOGLE_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLScnKYPOeajElWeapoxLw1ZP7dKEvpqeUb-NwzIw61kKqq0YOQ/viewform";
+
 const STARTER_QUESTIONS = [
   "What's fair rent in Gwarinpa?",
   "Calculate my move-in cost",
@@ -41,6 +44,21 @@ export default function ChatBot() {
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || isTyping) return;
+    // Quick reply that opens the data form directly
+    if (text === "Share my rent data 📊") {
+      window.open(GOOGLE_FORM_URL, "_blank", "noopener,noreferrer");
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content: text },
+        {
+          role: "bot",
+          content:
+            "The form just opened in a new tab 🙌 Your response helps us build accurate rent data for every Nigerian. Thank you! Come back here anytime you have questions.",
+          suggestions: ["Calculate my move-in cost", "What fees should I expect?"],
+        },
+      ]);
+      return;
+    }
     setHasInteracted(true);
 
     const userMsg: Message = { role: "user", content: text };
