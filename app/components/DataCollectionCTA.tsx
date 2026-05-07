@@ -1,18 +1,30 @@
 "use client";
 
 import { motion, useInView } from "framer-motion";
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-
-const STATS = [
-  { value: "142+", label: "renters surveyed" },
-  { value: "15", label: "states covered" },
-  { value: "76", label: "cities represented" },
-];
 
 export default function DataCollectionCTA() {
   const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-80px" });
+  const isInView = useInView(ref, { once: true, margin: "0px 0px -100px 0px" });
+  const [responseCount, setResponseCount] = useState(142);
+
+  useEffect(() => {
+    fetch("/api/response-count")
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.count === "number" && data.count > 0) {
+          setResponseCount(data.count);
+        }
+      })
+      .catch(() => setResponseCount(142));
+  }, []);
+
+  const STATS = [
+    { value: `${responseCount}+`, label: "renters surveyed" },
+    { value: "15", label: "states covered" },
+    { value: "76", label: "cities represented" },
+  ];
 
   return (
     <section ref={ref} className="py-20 px-6 bg-[#1B4332]">
@@ -29,7 +41,7 @@ export default function DataCollectionCTA() {
             <span className="text-[#F59E0B]">Rent Database</span>
           </h2>
           <p className="mt-4 text-white/70 text-lg max-w-xl mx-auto leading-relaxed">
-            142+ renters have already contributed data from 15 states. The more
+            {responseCount}+ renters have already contributed data from 15 states. The more
             data we have, the more accurately we can tell every Nigerian renter
             what&apos;s fair.
           </p>

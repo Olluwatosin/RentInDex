@@ -6,20 +6,32 @@ import { useEffect, useState } from "react";
 const GOOGLE_FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLScnKYPOeajElWeapoxLw1ZP7dKEvpqeUb-NwzIw61kKqq0YOQ/viewform";
 
-const stats = [
-  { value: "100+", label: "on the waitlist" },
-  { value: "Abuja", label: "launching first" },
-  { value: "40-50%", label: "hidden fee inflation" },
-];
-
 export default function Hero() {
   const [scrolled, setScrolled] = useState(false);
+  const [responseCount, setResponseCount] = useState(142);
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 10);
     window.addEventListener("scroll", handler);
     return () => window.removeEventListener("scroll", handler);
   }, []);
+
+  useEffect(() => {
+    fetch("/api/response-count")
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.count === "number" && data.count > 0) {
+          setResponseCount(data.count);
+        }
+      })
+      .catch(() => setResponseCount(142));
+  }, []);
+
+  const stats = [
+    { value: `${responseCount}+`, label: "renters contributed data" },
+    { value: "Abuja", label: "launching first" },
+    { value: "40-50%", label: "hidden fee inflation" },
+  ];
 
   const scrollToWaitlist = () => {
     document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });

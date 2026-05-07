@@ -23,7 +23,7 @@ const HERO_STATS = [
 
 const FEE_CARDS = [
   { icon: "⚖️", pct: 82, label: "Paid agency / lawyer fees" },
-  { icon: "🔍", pct: 70, label: "Also paid a finder's fee" },
+  { icon: "🔍", pct: 73, label: "Also paid a finder's fee" },
   { icon: "🔒", pct: 60, label: "Paid caution / security deposit" },
   { icon: "🏢", pct: 42, label: "Paid service charge on top" },
 ];
@@ -150,17 +150,30 @@ function RentTooltip({ active, payload }: { active?: boolean; payload?: { payloa
 // ─── main export ─────────────────────────────────────────────────────────────
 
 export default function DataInsights() {
+  const [responseCount, setResponseCount] = useState(142);
+
+  useEffect(() => {
+    fetch("/api/response-count")
+      .then((res) => res.json())
+      .then((data) => {
+        if (typeof data.count === "number" && data.count > 0) {
+          setResponseCount(data.count);
+        }
+      })
+      .catch(() => setResponseCount(142));
+  }, []);
+
   const statsRef = useRef(null);
   const feesRef = useRef(null);
   const statesRef = useRef(null);
   const rentRef = useRef(null);
   const ratingRef = useRef(null);
 
-  const statsInView = useInView(statsRef, { once: true, margin: "-80px" });
-  const feesInView = useInView(feesRef, { once: true, margin: "-80px" });
-  const statesInView = useInView(statesRef, { once: true, margin: "-80px" });
-  const rentInView = useInView(rentRef, { once: true, margin: "-80px" });
-  const ratingInView = useInView(ratingRef, { once: true, margin: "-80px" });
+  const statsInView = useInView(statsRef, { once: true, margin: "0px 0px -100px 0px" });
+  const feesInView = useInView(feesRef, { once: true, margin: "0px 0px -100px 0px" });
+  const statesInView = useInView(statesRef, { once: true, margin: "0px 0px -100px 0px" });
+  const rentInView = useInView(rentRef, { once: true, margin: "0px 0px -100px 0px" });
+  const ratingInView = useInView(ratingRef, { once: true, margin: "0px 0px -100px 0px" });
 
   return (
     <section className="bg-gray-50">
@@ -179,7 +192,7 @@ export default function DataInsights() {
             {HERO_STATS.map((s, i) => (
               <StatCounter
                 key={i}
-                value={s.value}
+                value={i === 0 ? responseCount : s.value}
                 suffix={s.suffix}
                 label={s.label}
                 active={statsInView}
