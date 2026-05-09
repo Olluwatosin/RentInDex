@@ -23,6 +23,15 @@ export async function POST(req: NextRequest) {
 
     const normalized = email.trim().toLowerCase();
 
+    // Persist to Resend Audience (best-effort — don't fail the request if this errors)
+    if (process.env.RESEND_AUDIENCE_ID) {
+      resend.contacts.create({
+        audienceId: process.env.RESEND_AUDIENCE_ID,
+        email: normalized,
+        unsubscribed: false,
+      }).catch(() => {});
+    }
+
     // Notify owner of new signup
     await resend.emails.send({
       from: "RentInDex <onboarding@resend.dev>",
