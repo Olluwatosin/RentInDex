@@ -61,6 +61,7 @@ function useCountUp(target: number, duration = 1800) {
   const started = useRef(false);
 
   useEffect(() => {
+    started.current = false; // reset so a target change re-triggers the animation
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting && !started.current) {
