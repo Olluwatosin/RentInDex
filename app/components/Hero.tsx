@@ -28,7 +28,7 @@ export default function Hero() {
   }, []);
 
   const stats = [
-    { value: `${responseCount}+`, label: "renters contributed data" },
+    { value: `${responseCount}+`, label: "renters surveyed across Nigeria" },
     { value: "Abuja", label: "launching first" },
     { value: "40-50%", label: "hidden fee inflation" },
   ];

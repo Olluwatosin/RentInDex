@@ -31,6 +31,7 @@ export default function ChatBot() {
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
+  const userMessageCount = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -42,32 +43,45 @@ export default function ChatBot() {
     if (isOpen) setTimeout(() => inputRef.current?.focus(), 300);
   }, [isOpen]);
 
+  const extractData = async (allMessages: Message[]) => {
+    const conversation = allMessages
+      .slice(1)
+      .map((m) => `${m.role === "user" ? "User" : "Bot"}: ${m.content}`)
+      .join("\n");
+    try {
+      const res = await fetch("/api/chatbot/extract-data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation }),
+      });
+      const data = await res.json();
+      if (data.saved) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "bot",
+            content:
+              "📊 Your rent data has been added to Nigeria's rent index. Thank you for helping thousands of renters!",
+          },
+        ]);
+      }
+    } catch {
+      // silent — extraction is best-effort
+    }
+  };
+
   const sendMessage = async (text: string) => {
     if (!text.trim() || isTyping) return;
-    // Quick reply that opens the data form directly
-    if (text === "Share my rent data 📊") {
-      window.open(GOOGLE_FORM_URL, "_blank", "noopener,noreferrer");
-      setMessages((prev) => [
-        ...prev,
-        { role: "user", content: text },
-        {
-          role: "bot",
-          content:
-            "The form just opened in a new tab 🙌 Your response helps us build accurate rent data for every Nigerian. Thank you! Come back here anytime you have questions.",
-          suggestions: ["Calculate my move-in cost", "What fees should I expect?"],
-        },
-      ]);
-      return;
-    }
     setHasInteracted(true);
 
     const userMsg: Message = { role: "user", content: text };
-    setMessages((prev) => [...prev, userMsg]);
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
     setInput("");
     setIsTyping(true);
+    userMessageCount.current += 1;
 
     try {
-      // Skip the static welcome message when building history
       const history = [...messages.slice(1), userMsg].map((m) => ({
         role: m.role === "bot" ? "assistant" : "user",
         content: m.content,
@@ -94,14 +108,16 @@ export default function ChatBot() {
         return;
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "bot",
-          content: data.reply,
-          suggestions: data.suggestions,
-        },
-      ]);
+      const finalMessages: Message[] = [
+        ...updatedMessages,
+        { role: "bot", content: data.reply, suggestions: data.suggestions },
+      ];
+      setMessages(finalMessages);
+
+      // Trigger extraction every 4th user message
+      if (userMessageCount.current % 4 === 0) {
+        extractData(finalMessages);
+      }
     } catch {
       setMessages((prev) => [
         ...prev,

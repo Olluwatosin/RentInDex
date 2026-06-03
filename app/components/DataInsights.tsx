@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion, useInView } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   BarChart,
   Bar,
@@ -55,21 +55,36 @@ const STAR_RATINGS = [
 
 // ─── count-up hook ────────────────────────────────────────────────────────────
 
-function useCountUp(target: number, duration = 1800, active = false) {
+function useCountUp(target: number, duration = 1800) {
   const [count, setCount] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
+
   useEffect(() => {
-    if (!active) return;
-    let start: number | null = null;
-    const step = (ts: number) => {
-      if (!start) start = ts;
-      const progress = Math.min((ts - start) / duration, 1);
-      // ease-out
-      setCount(Math.floor((1 - Math.pow(1 - progress, 3)) * target));
-      if (progress < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }, [active, target, duration]);
-  return count;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !started.current) {
+          started.current = true;
+          const startTime = Date.now();
+          const timer = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            const eased = 1 - Math.pow(1 - progress, 3);
+            setCount(Math.floor(eased * target));
+            if (progress >= 1) {
+              clearInterval(timer);
+              setCount(target);
+            }
+          }, 16);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    if (ref.current) observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [target, duration]);
+
+  return { count, ref };
 }
 
 // ─── sub-components ──────────────────────────────────────────────────────────
@@ -78,20 +93,20 @@ function StatCounter({
   value,
   suffix,
   label,
-  active,
   delay,
 }: {
   value: number;
   suffix: string;
   label: string;
-  active: boolean;
   delay: number;
 }) {
-  const count = useCountUp(value, 1800, active);
+  const { count, ref } = useCountUp(value, 1800);
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 24 }}
-      animate={active ? { opacity: 1, y: 0 } : {}}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
       transition={{ duration: 0.5, delay }}
       className="flex flex-col items-center text-center px-4"
     >
@@ -108,20 +123,20 @@ function FeeCard({
   icon,
   pct,
   label,
-  active,
   delay,
 }: {
   icon: string;
   pct: number;
   label: string;
-  active: boolean;
   delay: number;
 }) {
-  const count = useCountUp(pct, 1600, active);
+  const { count, ref } = useCountUp(pct, 1600);
   return (
     <motion.div
+      ref={ref}
       initial={{ opacity: 0, y: 30 }}
-      animate={active ? { opacity: 1, y: 0 } : {}}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
       transition={{ duration: 0.5, delay }}
       className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex flex-col items-center text-center hover:shadow-md transition-shadow"
     >
@@ -134,7 +149,6 @@ function FeeCard({
   );
 }
 
-// custom tooltip for rent bar chart
 function RentTooltip({ active, payload }: { active?: boolean; payload?: { payload: { range: string; pct: number; highlight: boolean } }[] }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
@@ -163,26 +177,15 @@ export default function DataInsights() {
       .catch(() => setResponseCount(142));
   }, []);
 
-  const statsRef = useRef(null);
-  const feesRef = useRef(null);
-  const statesRef = useRef(null);
-  const rentRef = useRef(null);
-  const ratingRef = useRef(null);
-
-  const statsInView = useInView(statsRef, { once: true, margin: "0px 0px -100px 0px" });
-  const feesInView = useInView(feesRef, { once: true, margin: "0px 0px -100px 0px" });
-  const statesInView = useInView(statesRef, { once: true, margin: "0px 0px -100px 0px" });
-  const rentInView = useInView(rentRef, { once: true, margin: "0px 0px -100px 0px" });
-  const ratingInView = useInView(ratingRef, { once: true, margin: "0px 0px -100px 0px" });
-
   return (
     <section className="bg-gray-50">
       {/* ── 1. Stats bar ─────────────────────────────────────────────────── */}
-      <div ref={statsRef} className="bg-[#1B4332] py-14 sm:py-16">
+      <div className="bg-[#1B4332] py-14 sm:py-16">
         <div className="max-w-6xl mx-auto px-6">
           <motion.p
             initial={{ opacity: 0 }}
-            animate={statsInView ? { opacity: 1 } : {}}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.4 }}
             className="text-center text-white/50 text-xs uppercase tracking-widest font-semibold mb-10"
           >
@@ -195,7 +198,6 @@ export default function DataInsights() {
                 value={i === 0 ? responseCount : s.value}
                 suffix={s.suffix}
                 label={s.label}
-                active={statsInView}
                 delay={i * 0.1}
               />
             ))}
@@ -204,11 +206,12 @@ export default function DataInsights() {
       </div>
 
       {/* ── 2. Fee cards ─────────────────────────────────────────────────── */}
-      <div ref={feesRef} className="py-20 px-6">
+      <div className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            animate={feesInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5 }}
             className="text-center mb-12"
           >
@@ -230,16 +233,15 @@ export default function DataInsights() {
                 icon={c.icon}
                 pct={c.pct}
                 label={c.label}
-                active={feesInView}
                 delay={i * 0.1}
               />
             ))}
           </div>
 
-          {/* Shocking callout */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
-            animate={feesInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.5 }}
             className="mt-8 bg-amber-50 border border-amber-200 rounded-2xl px-6 py-5 flex flex-col sm:flex-row items-center gap-4 text-center sm:text-left"
           >
@@ -253,11 +255,12 @@ export default function DataInsights() {
       </div>
 
       {/* ── 3. Top states ────────────────────────────────────────────────── */}
-      <div ref={statesRef} className="py-20 px-6 bg-white">
+      <div className="py-20 px-6 bg-white">
         <div className="max-w-4xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            animate={statesInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5 }}
             className="mb-12"
           >
@@ -277,7 +280,8 @@ export default function DataInsights() {
               <motion.div
                 key={i}
                 initial={{ opacity: 0, x: -20 }}
-                animate={statesInView ? { opacity: 1, x: 0 } : {}}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: true }}
                 transition={{ duration: 0.5, delay: i * 0.08 }}
               >
                 <div className="flex items-center justify-between mb-1.5">
@@ -287,7 +291,8 @@ export default function DataInsights() {
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={statesInView ? { width: `${(s.pct / 28) * 100}%` } : {}}
+                    whileInView={{ width: `${(s.pct / 28) * 100}%` }}
+                    viewport={{ once: true }}
                     transition={{ duration: 1, delay: i * 0.08 + 0.2, ease: "easeOut" }}
                     className="h-full rounded-full bg-[#1B4332]"
                   />
@@ -296,10 +301,10 @@ export default function DataInsights() {
             ))}
           </div>
 
-          {/* Landlord pipeline callout */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
-            animate={statesInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.6 }}
             className="mt-10 grid grid-cols-3 gap-4"
           >
@@ -318,11 +323,12 @@ export default function DataInsights() {
       </div>
 
       {/* ── 4. Rent range bar chart ───────────────────────────────────────── */}
-      <div ref={rentRef} className="py-20 px-6">
+      <div className="py-20 px-6">
         <div className="max-w-4xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            animate={rentInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5 }}
             className="mb-10"
           >
@@ -339,7 +345,8 @@ export default function DataInsights() {
 
           <motion.div
             initial={{ opacity: 0 }}
-            animate={rentInView ? { opacity: 1 } : {}}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.6, delay: 0.2 }}
             className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6"
           >
@@ -386,10 +393,10 @@ export default function DataInsights() {
             </div>
           </motion.div>
 
-          {/* Property types */}
           <motion.div
             initial={{ opacity: 0, y: 16 }}
-            animate={rentInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.4 }}
             className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
           >
@@ -409,11 +416,12 @@ export default function DataInsights() {
       </div>
 
       {/* ── 5. Value-for-money crisis ─────────────────────────────────────── */}
-      <div ref={ratingRef} className="py-20 px-6 bg-white">
+      <div className="py-20 px-6 bg-white">
         <div className="max-w-4xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            animate={ratingInView ? { opacity: 1, y: 0 } : {}}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
             transition={{ duration: 0.5 }}
             className="mb-10"
           >
@@ -426,13 +434,13 @@ export default function DataInsights() {
           </motion.div>
 
           <div className="grid md:grid-cols-2 gap-10 items-center">
-            {/* Bar ratings */}
             <div className="space-y-4">
               {STAR_RATINGS.map((r, i) => (
                 <motion.div
                   key={i}
                   initial={{ opacity: 0, x: -16 }}
-                  animate={ratingInView ? { opacity: 1, x: 0 } : {}}
+                  whileInView={{ opacity: 1, x: 0 }}
+                  viewport={{ once: true }}
                   transition={{ duration: 0.45, delay: i * 0.07 }}
                 >
                   <div className="flex items-center gap-3 mb-1">
@@ -454,7 +462,8 @@ export default function DataInsights() {
                   <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
-                      animate={ratingInView ? { width: `${r.pct}%` } : {}}
+                      whileInView={{ width: `${r.pct}%` }}
+                      viewport={{ once: true }}
                       transition={{ duration: 0.9, delay: i * 0.07 + 0.2, ease: "easeOut" }}
                       className={`h-full rounded-full ${
                         r.stars <= 2 ? "bg-red-400" : r.stars === 3 ? "bg-amber-400" : "bg-[#1B4332]"
@@ -465,10 +474,10 @@ export default function DataInsights() {
               ))}
             </div>
 
-            {/* Big callout */}
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
-              animate={ratingInView ? { opacity: 1, scale: 1 } : {}}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
               transition={{ duration: 0.5, delay: 0.4 }}
               className="bg-red-50 border border-red-100 rounded-3xl p-8 text-center"
             >
