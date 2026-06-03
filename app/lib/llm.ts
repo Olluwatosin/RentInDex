@@ -1,13 +1,12 @@
 import Groq from "groq-sdk";
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
 export async function callLLM(
   messages: { role: string; content: string }[],
   systemPrompt: string,
   maxTokens: number = 500
 ): Promise<string> {
   try {
+    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
     const response = await groq.chat.completions.create({
       model: "llama3-8b-8192",
       messages: [
