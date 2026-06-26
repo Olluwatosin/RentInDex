@@ -5,20 +5,19 @@ const GOOGLE_FORM_URL =
 
 const links = {
   Product: [
-    { label: "Rent Index", href: "#" },
-    { label: "Budget Matcher", href: "#" },
-    { label: "Fairness Score", href: "#" },
-    { label: "Move-in Calculator", href: "#" },
+    { label: "Rent Index", href: "#", comingSoon: true },
+    { label: "Budget Matcher", href: "#", comingSoon: true },
+    { label: "Fairness Score", href: "#", comingSoon: true },
+    { label: "Move-in Calculator", href: "#", comingSoon: true },
   ],
   Company: [
-    { label: "About Us", href: "#" },
-    { label: "How It Works", href: "#" },
-    { label: "Contact", href: "mailto:hello@rentindex.ng" },
+    { label: "How It Works", href: "/#how-it-works", comingSoon: false },
+    { label: "Contact", href: "mailto:hello@rentindex.ng", comingSoon: false },
+    { label: "Privacy Policy", href: "/privacy", comingSoon: false },
   ],
   Data: [
-    { label: "Fill Data Form", href: GOOGLE_FORM_URL },
-    { label: "Join Waitlist", href: "#waitlist" },
-    { label: "Privacy Policy", href: "#" },
+    { label: "Fill Data Form", href: GOOGLE_FORM_URL, comingSoon: false },
+    { label: "Join Waitlist", href: "#waitlist", comingSoon: false },
   ],
 };
 
@@ -86,15 +85,24 @@ export default function Footer() {
               <h4 className="text-white/90 font-semibold text-sm mb-5">{group}</h4>
               <ul className="space-y-3">
                 {items.map((item) => (
-                  <li key={item.label}>
-                    <a
-                      href={item.href}
-                      target={item.href.startsWith("http") ? "_blank" : undefined}
-                      rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
-                      className="text-white/40 hover:text-white text-sm transition-colors duration-200"
-                    >
-                      {item.label}
-                    </a>
+                  <li key={item.label} className="flex items-center gap-2">
+                    {item.comingSoon ? (
+                      <span className="text-white/25 text-sm cursor-default flex items-center gap-2">
+                        {item.label}
+                        <span className="text-[10px] font-medium text-[#F59E0B]/60 bg-[#F59E0B]/10 px-1.5 py-0.5 rounded">
+                          Soon
+                        </span>
+                      </span>
+                    ) : (
+                      <a
+                        href={item.href}
+                        target={item.href.startsWith("http") ? "_blank" : undefined}
+                        rel={item.href.startsWith("http") ? "noopener noreferrer" : undefined}
+                        className="text-white/40 hover:text-white text-sm transition-colors duration-200"
+                      >
+                        {item.label}
+                      </a>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
+import { rateLimit } from "@/app/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  if (!rateLimit(ip, 5, 60_000)) {
+    return NextResponse.json({ error: "Too many requests. Please wait a moment." }, { status: 429 });
+  }
+
   try {
     const body = await req.json();
     const { state, area, propertyType, rentRange, totalCostRange, email } = body;
@@ -12,12 +18,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
     }
 
+    const ownerEmail = process.env.OWNER_EMAIL;
+    if (!ownerEmail) {
+      console.error("OWNER_EMAIL env var not set");
+      return NextResponse.json({ error: "Server misconfiguration." }, { status: 500 });
+    }
+
     const resend = new Resend(process.env.RESEND_API_KEY);
 
-    // Notify owner with structured data
     await resend.emails.send({
       from: "RentInDex <onboarding@resend.dev>",
-      to: "salamimuhydeen76@gmail.com",
+      to: ownerEmail,
       subject: `📊 New rent data: ${propertyType} in ${area}, ${state}`,
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;background:#f9f9f9;border-radius:12px">
@@ -53,7 +64,6 @@ export async function POST(req: NextRequest) {
       `,
     });
 
-    // Confirmation to submitter (best-effort)
     if (email && email.includes("@")) {
       resend.emails.send({
         from: "RentInDex <onboarding@resend.dev>",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
 import { Resend } from "resend";
+import { rateLimit } from "@/app/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -9,12 +10,10 @@ const EXTRACTION_SYSTEM_PROMPT =
   "You are a data extraction assistant. Return only valid JSON with no markdown, no code fences, no explanation.";
 
 function parseExtracted(raw: string): ChatbotRentData | null {
-  // Strip markdown code fences if the LLM added them
   const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
   try {
     return JSON.parse(cleaned);
   } catch {
-    // Try to find the first { ... } block
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
       try {
@@ -28,8 +27,18 @@ function parseExtracted(raw: string): ChatbotRentData | null {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  if (!rateLimit(ip, 10, 60_000)) {
+    return NextResponse.json({ saved: false, reason: "rate_limited" }, { status: 429 });
+  }
+
   try {
-    const { conversation } = await req.json();
+    const body = await req.json();
+    const { conversation } = body;
+
+    if (!conversation || typeof conversation !== "string") {
+      return NextResponse.json({ saved: false, reason: "invalid_input" }, { status: 400 });
+    }
 
     const extractionPrompt = `Extract rental data from this conversation. Return ONLY valid JSON, nothing else:
 {
@@ -71,15 +80,13 @@ ${conversation}`;
       return NextResponse.json({ saved: false, reason: "low_confidence" });
     }
 
-    // Write to Google Sheet (primary — increments the live counter)
     await writeToSheet(data);
 
-    // Email backup to owner
-    if (process.env.RESEND_API_KEY) {
+    if (process.env.RESEND_API_KEY && process.env.OWNER_EMAIL) {
       const resend = new Resend(process.env.RESEND_API_KEY);
       resend.emails.send({
         from: "RentInDex <onboarding@resend.dev>",
-        to: "salamimuhydeen76@gmail.com",
+        to: process.env.OWNER_EMAIL,
         subject: `📊 Chatbot rent data: ${data.property_type ?? "?"} in ${data.area ?? "?"}, ${data.state ?? "?"}`,
         html: `
           <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;background:#f9f9f9;border-radius:12px">

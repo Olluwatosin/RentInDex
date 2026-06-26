@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/app/lib/llm";
+import { rateLimit } from "@/app/lib/rate-limit";
 
 const SYSTEM_PROMPT = `You are RentBot — the AI assistant for RentInDex, Nigeria's first rent intelligence platform.
 
@@ -51,11 +52,37 @@ function getSuggestions(userText: string, botReply: string): string[] {
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  try {
-    const { messages } = await req.json();
-    const lastUserMessage: string = messages[messages.length - 1]?.content ?? "";
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  if (!rateLimit(ip, 20, 60_000)) {
+    return NextResponse.json({ error: "Too many messages. Please wait a moment." }, { status: 429 });
+  }
 
-    const reply = await callLLM(messages, SYSTEM_PROMPT, 200);
+  try {
+    const body = await req.json();
+    const { messages } = body;
+
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json({ error: "Invalid messages format." }, { status: 400 });
+    }
+
+    const MAX_MESSAGES = 40;
+    const trimmed = messages.slice(-MAX_MESSAGES);
+
+    for (const msg of trimmed) {
+      if (
+        typeof msg !== "object" ||
+        !msg ||
+        typeof msg.role !== "string" ||
+        typeof msg.content !== "string" ||
+        !["user", "assistant"].includes(msg.role)
+      ) {
+        return NextResponse.json({ error: "Invalid message format." }, { status: 400 });
+      }
+    }
+
+    const lastUserMessage: string = trimmed[trimmed.length - 1]?.content ?? "";
+
+    const reply = await callLLM(trimmed, SYSTEM_PROMPT, 200);
 
     const suggestions = getSuggestions(lastUserMessage, reply);
     return NextResponse.json({ reply, suggestions });

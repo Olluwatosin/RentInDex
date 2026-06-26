@@ -65,7 +65,7 @@ export default function HowItWorks() {
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section className="py-24 bg-white" ref={ref}>
+    <section id="how-it-works" className="py-24 bg-white" ref={ref}>
       <div className="max-w-6xl mx-auto px-6">
         {/* Header */}
         <motion.div

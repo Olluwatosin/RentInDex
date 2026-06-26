@@ -21,9 +21,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const ownerEmail = process.env.OWNER_EMAIL;
+    if (!ownerEmail) {
+      console.error("OWNER_EMAIL env var not set");
+      return NextResponse.json({ error: "Server misconfiguration." }, { status: 500 });
+    }
+
     const normalized = email.trim().toLowerCase();
 
-    // Persist to Resend Audience (best-effort — don't fail the request if this errors)
     if (process.env.RESEND_AUDIENCE_ID) {
       resend.contacts.create({
         audienceId: process.env.RESEND_AUDIENCE_ID,
@@ -32,15 +37,13 @@ export async function POST(req: NextRequest) {
       }).catch(() => {});
     }
 
-    // Notify owner of new signup
     await resend.emails.send({
       from: "RentInDex <onboarding@resend.dev>",
-      to: "salamimuhydeen76@gmail.com",
+      to: ownerEmail,
       subject: `New waitlist signup: ${normalized}`,
       html: `<p><strong>${normalized}</strong> just joined the RentInDex waitlist.</p>`,
     });
 
-    // Send confirmation to subscriber (best-effort)
     resend.emails.send({
       from: "RentInDex <onboarding@resend.dev>",
       to: normalized,
@@ -61,9 +64,7 @@ export async function POST(req: NextRequest) {
           </p>
         </div>
       `,
-    }).catch(() => {
-      // Subscriber confirmation is best-effort; don't fail the request
-    });
+    }).catch(() => {});
 
     return NextResponse.json(
       {
