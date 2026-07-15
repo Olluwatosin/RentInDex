@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
+import { dbConfigured, insertRenterRow } from "@/app/lib/db";
 import { Resend } from "resend";
 import { rateLimit } from "@/app/lib/rate-limit";
 
@@ -80,7 +81,37 @@ ${conversation}`;
       return NextResponse.json({ saved: false, reason: "low_confidence" });
     }
 
-    await writeToSheet(data);
+    // Primary store: Supabase. The Google Sheet is kept as a dual-write
+    // backup during the migration period.
+    let stored = false;
+    if (dbConfigured() && data.state) {
+      try {
+        await insertRenterRow({
+          source: "chatbot",
+          state: data.state,
+          city: data.city,
+          area_raw: data.area,
+          property_type: data.property_type,
+          annual_rent: data.annual_rent,
+          agency_fee: data.agency_fee,
+          caution_deposit: data.caution_deposit,
+          service_charge: data.service_charge,
+          finder_fee: data.finder_fee,
+          confidence: data.confidence,
+        });
+        stored = true;
+      } catch (dbErr) {
+        console.error("Supabase insert failed for chatbot data:", dbErr);
+      }
+    }
+
+    try {
+      await writeToSheet(data);
+      stored = true;
+    } catch (sheetErr) {
+      console.error("Sheet write failed for chatbot data:", sheetErr);
+      if (!stored) throw sheetErr; // both stores failed — surface the error
+    }
 
     if (process.env.RESEND_API_KEY && process.env.OWNER_EMAIL) {
       const resend = new Resend(process.env.RESEND_API_KEY);

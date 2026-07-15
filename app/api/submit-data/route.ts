@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Resend } from "resend";
 import { rateLimit } from "@/app/lib/rate-limit";
+import { dbConfigured, insertRenterRow } from "@/app/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -18,15 +19,37 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing required fields." }, { status: 400 });
     }
 
+    // Store the submission — the database is the source of truth;
+    // the emails below are notifications, not the record.
+    let stored = false;
+    if (dbConfigured()) {
+      try {
+        await insertRenterRow({
+          source: "form",
+          state,
+          area_raw: area,
+          property_type: propertyType,
+          rent_range: rentRange,
+          total_cost_range: totalCostRange || null,
+          email: email || null,
+        });
+        stored = true;
+      } catch (dbErr) {
+        // don't lose the submission entirely — the owner email still captures it
+        console.error("Supabase insert failed for form submission:", dbErr);
+      }
+    }
+
     const ownerEmail = process.env.OWNER_EMAIL;
-    if (!ownerEmail) {
-      console.error("OWNER_EMAIL env var not set");
+    if (!ownerEmail && !stored) {
+      console.error("OWNER_EMAIL env var not set and database not configured");
       return NextResponse.json({ error: "Server misconfiguration." }, { status: 500 });
     }
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
+    if (ownerEmail) {
+      const resend = new Resend(process.env.RESEND_API_KEY);
 
-    await resend.emails.send({
+      await resend.emails.send({
       from: "RentInDex <onboarding@resend.dev>",
       to: ownerEmail,
       subject: `📊 New rent data: ${propertyType} in ${area}, ${state}`,
@@ -62,10 +85,10 @@ export async function POST(req: NextRequest) {
           <p style="color:#9ca3af;font-size:12px;margin-top:16px">Submitted at ${new Date().toISOString()}</p>
         </div>
       `,
-    });
+      });
 
-    if (email && email.includes("@")) {
-      resend.emails.send({
+      if (email && email.includes("@")) {
+        resend.emails.send({
         from: "RentInDex <onboarding@resend.dev>",
         to: email,
         subject: "Thanks for contributing to RentInDex! 🏠",
@@ -85,7 +108,8 @@ export async function POST(req: NextRequest) {
             </p>
           </div>
         `,
-      }).catch(() => {});
+        }).catch(() => {});
+      }
     }
 
     return NextResponse.json({ success: true }, { status: 201 });
