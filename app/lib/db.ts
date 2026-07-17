@@ -44,6 +44,52 @@ export async function insertRenterRow(row: RenterRow): Promise<void> {
   }
 }
 
+export interface RentBand {
+  level: "area" | "state";
+  p25: number;
+  p50: number;
+  p75: number;
+  n: number;
+}
+
+export interface RentLookup {
+  state: string;
+  area: string | null;
+  property_type: string | null;
+  user_rent: number | null;
+  asking: RentBand | null;
+  actual: RentBand | null;
+  verdict: "below" | "fair" | "above" | "no_rent" | "insufficient";
+  verdict_basis: "actual" | "asking" | null;
+  confidence: "high" | "medium" | "low" | null;
+}
+
+// Query the rent answer engine (Postgres RPC). Returns dual-source bands
+// (asking vs actually-paid) with honest geography fallback + a verdict.
+export async function rentLookup(params: {
+  state: string;
+  area?: string | null;
+  propertyType?: string | null;
+  annualRent?: number | null;
+}): Promise<RentLookup | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/rent_lookup`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({
+      p_state: params.state,
+      p_area: params.area ?? null,
+      p_property_type: params.propertyType ?? null,
+      p_annual_rent: params.annualRent ?? null,
+    }),
+  });
+  if (!res.ok) {
+    console.error(`rent_lookup failed (${res.status}): ${await res.text()}`);
+    return null;
+  }
+  return (await res.json()) as RentLookup;
+}
+
 export async function getResponseCount(): Promise<number> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/renter_data?select=id`, {
     method: "HEAD",
