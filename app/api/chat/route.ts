@@ -61,7 +61,8 @@ function buildLiveData(d: RentLookup): string | null {
   ];
   if (d.actual) lines.push("- " + bandLine("Actually paid by real renters", d.actual));
   if (d.asking) lines.push("- " + bandLine("Advertised asking prices online", d.asking));
-  const haveVerdict = d.user_rent && d.verdict !== "no_rent" && d.verdict !== "insufficient";
+  const haveVerdict =
+    d.user_rent != null && d.verdict !== "no_rent" && d.verdict !== "insufficient";
   if (haveVerdict) {
     const basis = d.verdict_basis === "actual" ? "what renters actually pay" : "advertised asking prices";
     const call =
@@ -69,7 +70,7 @@ function buildLiveData(d: RentLookup): string | null {
       : d.verdict === "fair" ? "FAIR — within the normal range"
       : "ABOVE the going rate — they may be overpaying";
     lines.push(
-      `- The user pays ${naira(d.user_rent)}. Versus ${basis}, this is ${call}. (confidence: ${d.confidence})`
+      `- The user pays ${naira(d.user_rent as number)}. Versus ${basis}, this is ${call}. (confidence: ${d.confidence})`
     );
   }
   lines.push(
