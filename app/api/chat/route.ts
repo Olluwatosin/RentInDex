@@ -52,53 +52,81 @@ function bandRange(b: { p25: number; p75: number; p50: number }) {
   return `${naira(b.p25)}–${naira(b.p75)} (typically ${naira(b.p50)})`;
 }
 
-// Turn a rent_lookup result into a factual block the model must ground its
-// answer in. The engine already decided the verdict; the model only phrases it.
-function buildLiveData(d: RentLookup): string | null {
+// Does the text mention a rent-like amount? Used to decide when the user has
+// just supplied their rent, so we deliver the verdict on that turn only.
+function mentionsRent(text: string): boolean {
+  return /₦\s*[\d,]{3,}|\b\d{5,}\b|\b\d+(?:\.\d+)?\s*(?:k|m|million|thousand|naira)\b/i.test(text);
+}
+
+// Deterministically compose the full verdict reply from the engine result.
+// The numbers and the fair/high/low call come from code, never the LLM — this
+// is money advice, so it must be exact and consistent. Returns null if the
+// engine doesn't have enough for a verdict yet.
+function composeVerdictReply(d: RentLookup): string | null {
+  if (d.user_rent == null || d.verdict === "no_rent" || d.verdict === "insufficient") return null;
   if (!d.asking && !d.actual) return null;
-  const haveVerdict =
-    d.user_rent != null && d.verdict !== "no_rent" && d.verdict !== "insufficient";
 
-  const lines: string[] = [
-    `LIVE DATA — ${d.property_type ?? "property"} in ${d.area ?? d.state}, ${d.state}. These are the ONLY figures you may use.`,
-  ];
+  const ref = d.verdict_basis === "actual" ? d.actual : d.asking;
+  if (!ref) return null;
 
-  if (haveVerdict) {
-    // The band the verdict is based on (never let the model pick the other one).
-    const ref = d.verdict_basis === "actual" ? d.actual! : d.asking!;
-    const refLabel =
-      d.verdict_basis === "actual" ? "what real renters told us they pay" : "advertised asking prices";
-    const refScope =
-      ref.level === "area" ? `in ${d.area}` : `across ${d.state} (we don't have ${d.area}-specific data yet)`;
-    const call =
-      d.verdict_basis === "actual"
-        ? d.verdict === "below" ? "a GOOD DEAL — below what renters pay"
-          : d.verdict === "fair" ? "FAIR — right around what renters pay"
-          : "HIGH — above what renters actually pay"
-        : d.verdict === "below" ? "below typical asking prices — likely a good deal"
-          : d.verdict === "fair" ? "around the typical asking price"
-          : "above typical asking prices";
-    lines.push(
-      `VERDICT (state this, do not re-calculate it): their ${naira(d.user_rent as number)} is ${call}. Reference: ${refLabel} ${refScope} run ${bandRange(ref)}. Confidence: ${d.confidence}.`
-    );
-    // Show the other band as context only, clearly subordinate.
-    const other = d.verdict_basis === "actual" ? d.asking : d.actual;
-    if (other) {
-      const otherLabel = d.verdict_basis === "actual" ? "asking prices online" : "what renters told us";
-      lines.push(
-        `Context only (do NOT base the verdict on this): ${otherLabel} ${other.level === "area" ? "here" : "state-wide"} run ${bandRange(other)}.`
-      );
-    }
-    lines.push(
-      "Communicate the VERDICT in natural, short WhatsApp style — do not paste these lines verbatim or say \"data points\". Do NOT ask more setup questions; you may add ONE brief electricity-hours question at the end. If confidence is medium/low, add a short honest caveat that data for their area is still growing."
-    );
+  const type = d.property_type ?? "place";
+  const place = d.area ? `${d.area}, ${d.state}` : d.state;
+  const rent = naira(d.user_rent);
+
+  let headline: string;
+  if (d.verdict_basis === "actual") {
+    headline =
+      d.verdict === "below"
+        ? `✅ Good deal! Your ${rent}/year is *below* what renters typically pay for a ${type} in ${place}.`
+        : d.verdict === "fair"
+        ? `👍 Looks fair. Your ${rent}/year is right around what renters pay for a ${type} in ${place}.`
+        : `⚠️ On the high side. Your ${rent}/year is *above* what renters told us they pay for a ${type} in ${place} — you may have room to negotiate.`;
+    headline += ` Most pay ${bandRange(ref)}.`;
   } else {
-    if (d.actual) lines.push(`What renters pay: ${bandRange(d.actual)} (${d.actual.level}-level).`);
-    if (d.asking) lines.push(`Asking prices online: ${bandRange(d.asking)} (${d.asking.level}-level).`);
-    lines.push(
-      "Use ONLY these figures. Ask the user for their apartment type and yearly rent so we can give a verdict."
+    headline =
+      d.verdict === "below"
+        ? `✅ Below market. Your ${rent}/year is *below* typical asking prices for a ${type} in ${place} — looks like a good deal.`
+        : d.verdict === "fair"
+        ? `👍 Around market. Your ${rent}/year is near typical asking prices for a ${type} in ${place}.`
+        : `⚠️ Above asking. Your ${rent}/year is higher than most listings for a ${type} in ${place}.`;
+    headline += ` Agents advertise these around ${bandRange(ref)}.`;
+  }
+
+  const parts = [headline];
+
+  // The other band, as brief context.
+  const other = d.verdict_basis === "actual" ? d.asking : d.actual;
+  if (other) {
+    parts.push(
+      d.verdict_basis === "actual"
+        ? `For context, agents advertise similar places around ${bandRange(other)}.`
+        : `Renters we've heard from pay around ${bandRange(other)}.`
     );
   }
+
+  // Honest caveat when the reference isn't area-specific or confidence is soft.
+  if (ref.level === "state" || d.confidence !== "high") {
+    parts.push(
+      `⚠️ Heads up: we're still building data for ${d.area ?? "your area"} specifically, so treat this as a ${d.state}-wide estimate for now.`
+    );
+  }
+
+  // One enrichment question — grows the unique electricity dataset.
+  parts.push(
+    `One quick thing to help other renters 🙏 — roughly how many hours of electricity do you get a day, and do you know your band (A/B/C)?`
+  );
+
+  return parts.join("\n\n");
+}
+
+// When we don't yet have enough for a verdict, give the LLM the real figures
+// as context so it can keep the conversation grounded while gathering details.
+function buildGatheringHint(d: RentLookup): string | null {
+  if (!d.asking && !d.actual) return null;
+  const lines = [`CONTEXT — real data for ${d.property_type ?? "property"} in ${d.area ?? d.state}, ${d.state} (use ONLY these figures, never invent):`];
+  if (d.actual) lines.push(`- What renters pay: ${bandRange(d.actual)} (${d.actual.level}-level)`);
+  if (d.asking) lines.push(`- Asking prices online: ${bandRange(d.asking)} (${d.asking.level}-level)`);
+  lines.push("Ask the user for their apartment type and yearly rent (whichever is missing) so we can give a verdict.");
   return lines.join("\n");
 }
 
@@ -161,8 +189,7 @@ export async function POST(req: NextRequest) {
 
     const lastUserMessage: string = trimmed[trimmed.length - 1]?.content ?? "";
 
-    // If the conversation names a Nigerian state, pull real numbers from the
-    // answer engine and hand them to the model as ground truth.
+    // If the conversation names a Nigerian state, consult the answer engine.
     let systemPrompt = SYSTEM_PROMPT;
     const conversationText = trimmed
       .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
@@ -176,8 +203,22 @@ export async function POST(req: NextRequest) {
         propertyType: fields?.property_type ?? null,
         annualRent: fields?.annual_rent ?? null,
       });
-      const liveData = lookup ? buildLiveData(lookup) : null;
-      if (liveData) systemPrompt = `${SYSTEM_PROMPT}\n\n${liveData}`;
+      if (lookup) {
+        // Deliver the verdict deterministically on the turn the user supplies
+        // their rent — exact numbers, no LLM in the money-advice path.
+        if (mentionsRent(lastUserMessage)) {
+          const verdictReply = composeVerdictReply(lookup);
+          if (verdictReply) {
+            return NextResponse.json({
+              reply: verdictReply,
+              suggestions: ["What fees should I expect?", "How do I negotiate rent?"],
+            });
+          }
+        }
+        // Otherwise ground the LLM with the real figures while it gathers details.
+        const hint = buildGatheringHint(lookup);
+        if (hint) systemPrompt = `${SYSTEM_PROMPT}\n\n${hint}`;
+      }
     }
 
     const reply = await callLLM(trimmed, systemPrompt, 200);
