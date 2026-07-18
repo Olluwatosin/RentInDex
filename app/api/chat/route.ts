@@ -49,6 +49,8 @@ function getSuggestions(userText: string, botReply: string): string[] {
 const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 
 function bandRange(b: { p25: number; p75: number; p50: number }) {
+  // Bucketed data can collapse to a single value — show it cleanly, not "₦X–₦X".
+  if (b.p25 === b.p75) return `around ${naira(b.p50)}`;
   return `${naira(b.p25)}–${naira(b.p75)} (typically ${naira(b.p50)})`;
 }
 
@@ -126,7 +128,22 @@ function buildGatheringHint(d: RentLookup): string | null {
   const lines = [`CONTEXT — real data for ${d.property_type ?? "property"} in ${d.area ?? d.state}, ${d.state} (use ONLY these figures, never invent):`];
   if (d.actual) lines.push(`- What renters pay: ${bandRange(d.actual)} (${d.actual.level}-level)`);
   if (d.asking) lines.push(`- Asking prices online: ${bandRange(d.asking)} (${d.asking.level}-level)`);
-  lines.push("Ask the user for their apartment type and yearly rent (whichever is missing) so we can give a verdict.");
+
+  // Tell the model exactly what's already known so it never re-asks for it.
+  const known: string[] = [`state=${d.state}`];
+  if (d.area) known.push(`area=${d.area}`);
+  if (d.property_type) known.push(`apartment type=${d.property_type}`);
+  const missing: string[] = [];
+  if (!d.area) missing.push("area/neighbourhood");
+  if (!d.property_type) missing.push("apartment type");
+  if (d.user_rent == null) missing.push("yearly rent in ₦");
+
+  lines.push(`Already known (do NOT ask for these again): ${known.join(", ")}.`);
+  lines.push(
+    missing.length
+      ? `Ask ONLY for the still-missing detail(s), one at a time: ${missing.join(", ")}.`
+      : `You have everything — no more questions needed.`
+  );
   return lines.join("\n");
 }
 
