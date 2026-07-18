@@ -74,11 +74,11 @@ function buildLiveData(d: RentLookup): string | null {
     );
   }
   lines.push(
-    "Use ONLY these figures — never invent others. If confidence is low or the data is state-wide, say so honestly."
+    "Use ONLY these figures — never invent others. Rephrase them naturally in your own words, short WhatsApp style; do NOT paste these bullet lines verbatim or say phrases like \"data points\"."
   );
   if (haveVerdict) {
     lines.push(
-      "IMPORTANT: You now have enough to answer. DELIVER THIS VERDICT NOW in your reply — state whether their rent is fair/high/low and quote the real range. Do NOT keep asking setup questions. After giving the verdict, you may ask ONE follow-up (e.g. hours of electricity) to enrich our data."
+      "You now have everything needed. In THIS reply, give the verdict directly: tell them if their rent is fair, high or low and quote the typical range in ₦. Do NOT ask any more setup questions first. You may add ONE short follow-up about electricity hours at the very end."
     );
   } else {
     lines.push("Ask the user for their apartment type and yearly rent so we can give a verdict.");
