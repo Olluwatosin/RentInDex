@@ -61,7 +61,8 @@ function buildLiveData(d: RentLookup): string | null {
   ];
   if (d.actual) lines.push("- " + bandLine("Actually paid by real renters", d.actual));
   if (d.asking) lines.push("- " + bandLine("Advertised asking prices online", d.asking));
-  if (d.user_rent && d.verdict !== "no_rent" && d.verdict !== "insufficient") {
+  const haveVerdict = d.user_rent && d.verdict !== "no_rent" && d.verdict !== "insufficient";
+  if (haveVerdict) {
     const basis = d.verdict_basis === "actual" ? "what renters actually pay" : "advertised asking prices";
     const call =
       d.verdict === "below" ? "BELOW the going rate — a good deal"
@@ -72,8 +73,15 @@ function buildLiveData(d: RentLookup): string | null {
     );
   }
   lines.push(
-    "Use ONLY these figures. If confidence is low or the data is state-wide, say so honestly and invite the user to help by sharing their own rent."
+    "Use ONLY these figures — never invent others. If confidence is low or the data is state-wide, say so honestly."
   );
+  if (haveVerdict) {
+    lines.push(
+      "IMPORTANT: You now have enough to answer. DELIVER THIS VERDICT NOW in your reply — state whether their rent is fair/high/low and quote the real range. Do NOT keep asking setup questions. After giving the verdict, you may ask ONE follow-up (e.g. hours of electricity) to enrich our data."
+    );
+  } else {
+    lines.push("Ask the user for their apartment type and yearly rent so we can give a verdict.");
+  }
   return lines.join("\n");
 }
 
