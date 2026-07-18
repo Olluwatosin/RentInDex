@@ -48,40 +48,56 @@ function getSuggestions(userText: string, botReply: string): string[] {
 
 const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 
-function bandLine(label: string, b: { level: string; p25: number; p50: number; p75: number; n: number }) {
-  const scope = b.level === "area" ? "this area" : "state-wide (no area-specific data yet)";
-  return `${label}: typically ${naira(b.p50)} (most pay ${naira(b.p25)}–${naira(b.p75)}), from ${b.n} data points, ${scope}`;
+function bandRange(b: { p25: number; p75: number; p50: number }) {
+  return `${naira(b.p25)}–${naira(b.p75)} (typically ${naira(b.p50)})`;
 }
 
-// Turn a rent_lookup result into a factual block the model must ground its answer in.
+// Turn a rent_lookup result into a factual block the model must ground its
+// answer in. The engine already decided the verdict; the model only phrases it.
 function buildLiveData(d: RentLookup): string | null {
   if (!d.asking && !d.actual) return null;
-  const lines: string[] = [
-    `LIVE DATA for ${d.property_type ?? "property"} in ${d.area ?? d.state}, ${d.state}:`,
-  ];
-  if (d.actual) lines.push("- " + bandLine("Actually paid by real renters", d.actual));
-  if (d.asking) lines.push("- " + bandLine("Advertised asking prices online", d.asking));
   const haveVerdict =
     d.user_rent != null && d.verdict !== "no_rent" && d.verdict !== "insufficient";
+
+  const lines: string[] = [
+    `LIVE DATA — ${d.property_type ?? "property"} in ${d.area ?? d.state}, ${d.state}. These are the ONLY figures you may use.`,
+  ];
+
   if (haveVerdict) {
-    const basis = d.verdict_basis === "actual" ? "what renters actually pay" : "advertised asking prices";
+    // The band the verdict is based on (never let the model pick the other one).
+    const ref = d.verdict_basis === "actual" ? d.actual! : d.asking!;
+    const refLabel =
+      d.verdict_basis === "actual" ? "what real renters told us they pay" : "advertised asking prices";
+    const refScope =
+      ref.level === "area" ? `in ${d.area}` : `across ${d.state} (we don't have ${d.area}-specific data yet)`;
     const call =
-      d.verdict === "below" ? "BELOW the going rate — a good deal"
-      : d.verdict === "fair" ? "FAIR — within the normal range"
-      : "ABOVE the going rate — they may be overpaying";
+      d.verdict_basis === "actual"
+        ? d.verdict === "below" ? "a GOOD DEAL — below what renters pay"
+          : d.verdict === "fair" ? "FAIR — right around what renters pay"
+          : "HIGH — above what renters actually pay"
+        : d.verdict === "below" ? "below typical asking prices — likely a good deal"
+          : d.verdict === "fair" ? "around the typical asking price"
+          : "above typical asking prices";
     lines.push(
-      `- The user pays ${naira(d.user_rent as number)}. Versus ${basis}, this is ${call}. (confidence: ${d.confidence})`
+      `VERDICT (state this, do not re-calculate it): their ${naira(d.user_rent as number)} is ${call}. Reference: ${refLabel} ${refScope} run ${bandRange(ref)}. Confidence: ${d.confidence}.`
     );
-  }
-  lines.push(
-    "Use ONLY these figures — never invent others. Rephrase them naturally in your own words, short WhatsApp style; do NOT paste these bullet lines verbatim or say phrases like \"data points\"."
-  );
-  if (haveVerdict) {
+    // Show the other band as context only, clearly subordinate.
+    const other = d.verdict_basis === "actual" ? d.asking : d.actual;
+    if (other) {
+      const otherLabel = d.verdict_basis === "actual" ? "asking prices online" : "what renters told us";
+      lines.push(
+        `Context only (do NOT base the verdict on this): ${otherLabel} ${other.level === "area" ? "here" : "state-wide"} run ${bandRange(other)}.`
+      );
+    }
     lines.push(
-      "You now have everything needed. In THIS reply, give the verdict directly: tell them if their rent is fair, high or low and quote the typical range in ₦. Do NOT ask any more setup questions first. You may add ONE short follow-up about electricity hours at the very end."
+      "Communicate the VERDICT in natural, short WhatsApp style — do not paste these lines verbatim or say \"data points\". Do NOT ask more setup questions; you may add ONE brief electricity-hours question at the end. If confidence is medium/low, add a short honest caveat that data for their area is still growing."
     );
   } else {
-    lines.push("Ask the user for their apartment type and yearly rent so we can give a verdict.");
+    if (d.actual) lines.push(`What renters pay: ${bandRange(d.actual)} (${d.actual.level}-level).`);
+    if (d.asking) lines.push(`Asking prices online: ${bandRange(d.asking)} (${d.asking.level}-level).`);
+    lines.push(
+      "Use ONLY these figures. Ask the user for their apartment type and yearly rent so we can give a verdict."
+    );
   }
   return lines.join("\n");
 }
