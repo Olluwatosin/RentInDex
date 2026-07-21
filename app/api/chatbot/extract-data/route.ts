@@ -35,11 +35,14 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { conversation } = body;
+    const { conversation, conversationId } = body;
 
     if (!conversation || typeof conversation !== "string") {
       return NextResponse.json({ saved: false, reason: "invalid_input" }, { status: 400 });
     }
+
+    const convId: string | null =
+      typeof conversationId === "string" && conversationId.length <= 64 ? conversationId : null;
 
     const extractionPrompt = `Extract rental data from this conversation. Return ONLY valid JSON, nothing else:
 {
@@ -52,12 +55,18 @@ export async function POST(req: NextRequest) {
   "caution_deposit": number or null,
   "service_charge": number or null,
   "finder_fee": number or null,
+  "power_hours": number or null,
+  "power_band": "A" | "B" | "C" | "D" | "E" or null,
+  "power_metering": "prepaid" | "estimated" | "shared" or null,
   "confidence": "high" or "medium" or "low"
 }
 
 Rules:
 - Convert ranges to midpoint (e.g. "800k to 1m" = 900000)
 - Convert percentages to amounts if rent is known
+- power_hours = approximate hours of electricity per day as a number 0–24 (e.g. "about 10 hours"=10, "6 to 12"=9, "18+"=18, "half a day"=12)
+- power_band = the DisCo tariff band letter only, if the user states it; else null
+- power_metering = prepaid/estimated/shared only if mentioned; else null
 - confidence = "high" if state + area + rent all present
 - confidence = "medium" if at least state + rent present
 - confidence = "low" if missing key fields
@@ -88,6 +97,7 @@ ${conversation}`;
       try {
         await insertRenterRow({
           source: "chatbot",
+          conversation_id: convId, // upsert: one conversation = one row
           state: data.state,
           city: data.city,
           area_raw: data.area,
@@ -97,6 +107,9 @@ ${conversation}`;
           caution_deposit: data.caution_deposit,
           service_charge: data.service_charge,
           finder_fee: data.finder_fee,
+          power_hours: data.power_hours,
+          power_band: data.power_band,
+          power_metering: data.power_metering,
           confidence: data.confidence,
         });
         stored = true;
@@ -105,12 +118,16 @@ ${conversation}`;
       }
     }
 
-    try {
-      await writeToSheet(data);
-      stored = true;
-    } catch (sheetErr) {
-      console.error("Sheet write failed for chatbot data:", sheetErr);
-      if (!stored) throw sheetErr; // both stores failed — surface the error
+    // Sheet is now a FALLBACK only (Supabase is the source of truth). Dual-writing
+    // would append a duplicate row on every re-extraction of the same conversation.
+    if (!stored) {
+      try {
+        await writeToSheet(data);
+        stored = true;
+      } catch (sheetErr) {
+        console.error("Sheet fallback write failed for chatbot data:", sheetErr);
+        throw sheetErr; // both stores failed — surface the error
+      }
     }
 
     if (process.env.RESEND_API_KEY && process.env.OWNER_EMAIL) {

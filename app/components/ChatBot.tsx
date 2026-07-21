@@ -32,6 +32,9 @@ export default function ChatBot() {
   const [isTyping, setIsTyping] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const userMessageCount = useRef(0);
+  const conversationId = useRef<string>(
+    typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
+  );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -52,7 +55,7 @@ export default function ChatBot() {
       const res = await fetch("/api/chatbot/extract-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation }),
+        body: JSON.stringify({ conversation, conversationId: conversationId.current }),
       });
       const data = await res.json();
       if (data.saved) {
@@ -114,8 +117,10 @@ export default function ChatBot() {
       ];
       setMessages(finalMessages);
 
-      // Trigger extraction every 4th user message
-      if (userMessageCount.current % 4 === 0) {
+      // Extract from the 3rd user message onward. Upsert keyed by conversationId
+      // means repeated calls update one row (no duplicates) and late answers
+      // like electricity get captured whenever they arrive.
+      if (userMessageCount.current >= 3) {
         extractData(finalMessages);
       }
     } catch {

@@ -70,6 +70,9 @@ export interface ChatbotRentData {
   caution_deposit: number | null;
   service_charge: number | null;
   finder_fee: number | null;
+  power_hours: number | null;
+  power_band: string | null;
+  power_metering: string | null;
   confidence: string;
 }
 
@@ -89,6 +92,9 @@ export async function writeToSheet(data: ChatbotRentData): Promise<void> {
     data.finder_fee ?? "",
     data.confidence,
     "chatbot",
+    data.power_hours ?? "",
+    data.power_band ?? "",
+    data.power_metering ?? "",
   ];
 
   const res = await fetch(

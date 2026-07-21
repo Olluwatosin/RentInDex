@@ -18,6 +18,7 @@ function headers(): Record<string, string> {
 
 export interface RenterRow {
   source: "form" | "chatbot";
+  conversation_id?: string | null;
   state: string;
   city?: string | null;
   area_raw?: string | null;
@@ -29,14 +30,24 @@ export interface RenterRow {
   caution_deposit?: number | null;
   service_charge?: number | null;
   finder_fee?: number | null;
+  power_hours?: number | null;
+  power_band?: string | null;
+  power_metering?: string | null;
   confidence?: string | null;
   email?: string | null;
 }
 
 export async function insertRenterRow(row: RenterRow): Promise<void> {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/renter_data`, {
+  // With a conversation_id, upsert so repeated extractions of the same growing
+  // chat update one row instead of inserting duplicates. Otherwise plain insert.
+  const upsert = row.conversation_id != null;
+  const url = `${SUPABASE_URL}/rest/v1/renter_data${upsert ? "?on_conflict=conversation_id" : ""}`;
+  const res = await fetch(url, {
     method: "POST",
-    headers: { ...headers(), Prefer: "return=minimal" },
+    headers: {
+      ...headers(),
+      Prefer: upsert ? "resolution=merge-duplicates,return=minimal" : "return=minimal",
+    },
     body: JSON.stringify(row),
   });
   if (!res.ok) {
