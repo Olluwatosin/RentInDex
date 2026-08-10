@@ -128,6 +128,33 @@ export async function countListings(): Promise<number> {
   return total ? parseInt(total, 10) : 0;
 }
 
+// Areas we have data for in a state (most-covered first) — for RentBot to
+// offer real alternatives when it lacks the exact place a user asked about.
+export async function areasInState(state: string): Promise<string[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/areas_in_state`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({ p_state: state }),
+  });
+  if (!res.ok) return [];
+  const rows = (await res.json()) as { area: string; n: number }[];
+  return rows.map((r) => r.area).filter(Boolean);
+}
+
+// Infer the state for an area the user named without a state (e.g. "Gwarinpa").
+export async function stateForArea(area: string): Promise<string | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/find_state_for_area`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({ p_area: area }),
+  });
+  if (!res.ok) return null;
+  const val = await res.json();
+  return typeof val === "string" && val.length > 0 ? val : null;
+}
+
 export async function getResponseCount(): Promise<number> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/renter_data?select=id`, {
     method: "HEAD",

@@ -86,8 +86,12 @@ ${conversation}`;
       return NextResponse.json({ saved: false, reason: "parse_error" });
     }
 
-    if (data.confidence !== "high" && data.confidence !== "medium") {
-      return NextResponse.json({ saved: false, reason: "low_confidence" });
+    // Hard guard: a rent record is only meaningful with a state AND an actual
+    // rent figure. Never save (or claim we saved) a near-empty row — this is
+    // what caused "your data was saved" with no rent behind it.
+    const hasRealRent = typeof data.annual_rent === "number" && data.annual_rent > 0;
+    if (!data.state || !hasRealRent) {
+      return NextResponse.json({ saved: false, reason: "need_state_and_rent" });
     }
 
     // Primary store: Supabase. The Google Sheet is kept as a dual-write

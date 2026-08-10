@@ -38,6 +38,7 @@ export default function ChatBot() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
+  const savedConfirmed = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -70,13 +71,15 @@ export default function ChatBot() {
         body: JSON.stringify({ conversation, conversationId: conversationId.current }),
       });
       const data = await res.json();
-      if (data.saved) {
+      // Confirm only on a real save, and only once per conversation.
+      if (data.saved && !savedConfirmed.current) {
+        savedConfirmed.current = true;
         setMessages((prev) => [
           ...prev,
           {
             role: "bot",
             content:
-              "📊 Your rent data has been added to Nigeria's rent index. Thank you for helping thousands of renters!",
+              "📊 Thank you! Your rent has been added to Nigeria's rent index — you're helping the next renter get a real answer. 🙌",
           },
         ]);
       }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/app/lib/llm";
 import { rateLimit } from "@/app/lib/rate-limit";
-import { dbConfigured, rentLookup, RentLookup } from "@/app/lib/db";
+import { dbConfigured, rentLookup, RentLookup, areasInState, stateForArea } from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
 
 const SYSTEM_PROMPT = `You are RentBot — the AI assistant for RentInDex, Nigeria's first rent intelligence platform.
@@ -128,30 +128,50 @@ function asksAverage(text: string): boolean {
   );
 }
 
-// Deterministically answer "what's the average rent for X in Y" from real data,
-// even when the user hasn't given their own rent. Prefers actual-paid figures.
-function composeAverageReply(d: RentLookup): string | null {
+// Deterministically answer "what's the average rent for X in Y" from real data.
+// If we have the asked AREA, give it. If the user asked about a specific area we
+// don't have, be honest, offer areas we DO have, and invite them to contribute.
+function composeAverageReply(
+  d: RentLookup,
+  askedArea: string | null,
+  altAreas: string[]
+): string | null {
+  const type = d.property_type ?? "place";
+  const hasAreaData =
+    d.actual?.level === "area" || d.asking?.level === "area";
+
+  // Case 1: user asked about a specific area we DON'T have area-level data for.
+  if (askedArea && !hasAreaData) {
+    const parts: string[] = [
+      `📍 I don't have rent data for ${askedArea} specifically yet — I'd rather tell you that than guess.`,
+    ];
+    const alts = altAreas.filter((a) => a.toLowerCase() !== askedArea.toLowerCase()).slice(0, 5);
+    if (alts.length) {
+      parts.push(`I do have data for other areas in ${d.state} — like ${alts.join(", ")}. Want the average for any of those?`);
+    }
+    if (d.actual || d.asking) {
+      const b = d.actual ?? d.asking!;
+      const lbl = d.actual ? "renters across the state pay" : "listings across the state are advertised at";
+      parts.push(`As a rough ${d.state}-wide guide, ${lbl} ${bandRange(b)} a year — but that's not ${askedArea}-specific.`);
+    }
+    parts.push(
+      `👉 You can help fix this: if you rent around ${askedArea}, tell me your apartment type and yearly rent and I'll add it, so the next person gets a real answer. What do you pay?`
+    );
+    return parts.join("\n\n");
+  }
+
+  // Case 2: we have real (area-level, or a generic no-area) data — give it.
   const band = d.actual ?? d.asking;
   if (!band) return null;
-  const src = d.actual ? d.actual : d.asking!;
-  const type = d.property_type ?? "place";
   const place = d.area ?? d.state;
-
   const parts: string[] = [];
   if (d.actual) {
-    parts.push(
-      `💰 For a ${type} in ${place}, renters told us they typically pay ${bandRange(d.actual)} a year.`
-    );
+    parts.push(`💰 For a ${type} in ${place}, renters told us they typically pay ${bandRange(d.actual)} a year.`);
     if (d.asking) parts.push(`Agents advertise similar ones around ${bandRange(d.asking)} — asking prices always run higher.`);
   } else {
-    parts.push(
-      `💰 For a ${type} in ${place}, listings are advertised around ${bandRange(d.asking!)} a year. Note: these are asking prices — real renters often pay less.`
-    );
+    parts.push(`💰 For a ${type} in ${place}, listings are advertised around ${bandRange(d.asking!)} a year. Note: these are asking prices — real renters often pay less.`);
   }
-  if (src.level === "state" || d.confidence === "low") {
-    parts.push(`⚠️ This is a ${d.state}-wide estimate — we're still gathering ${d.area ?? "area"}-level data.`);
-  }
-  parts.push(`Want me to check if a specific rent is fair? Just tell me the yearly amount 🙂`);
+  parts.push(`Want me to check if a specific rent is fair, or add your own? Just tell me the yearly amount 🙂`);
   return parts.join("\n\n");
 }
 
@@ -240,46 +260,57 @@ export async function POST(req: NextRequest) {
 
     const lastUserMessage: string = trimmed[trimmed.length - 1]?.content ?? "";
 
-    // If the conversation names a Nigerian state, consult the answer engine.
     let systemPrompt = SYSTEM_PROMPT;
     const conversationText = trimmed
       .map((m: { role: string; content: string }) => `${m.role}: ${m.content}`)
       .join("\n");
-    const state = detectState(conversationText);
-    if (state && dbConfigured()) {
+
+    // Consult the answer engine when the message looks rent-related.
+    const rentIntent =
+      asksAverage(lastUserMessage) || mentionsRent(lastUserMessage) || Boolean(detectState(conversationText));
+
+    if (rentIntent && dbConfigured()) {
       const fields = await extractLookupFields(conversationText);
-      const lookup = await rentLookup({
-        state,
-        area: fields?.area ?? null,
-        propertyType: fields?.property_type ?? null,
-        annualRent: fields?.annual_rent ?? null,
-      });
-      if (lookup) {
-        // 1) User gave their rent → deliver the fairness verdict deterministically
-        //    (exact numbers, no LLM in the money-advice path).
-        if (mentionsRent(lastUserMessage)) {
-          const verdictReply = composeVerdictReply(lookup);
-          if (verdictReply) {
-            return NextResponse.json({
-              reply: verdictReply,
-              suggestions: ["What fees should I expect?", "How do I negotiate rent?"],
-            });
+      const askedArea = fields?.area ?? null;
+      // State may be named directly, or inferred from the area (e.g. "Gwarinpa" → Abuja).
+      let state = detectState(conversationText);
+      if (!state && askedArea) state = await stateForArea(askedArea);
+
+      if (state) {
+        const lookup = await rentLookup({
+          state,
+          area: askedArea,
+          propertyType: fields?.property_type ?? null,
+          annualRent: fields?.annual_rent ?? null,
+        });
+        if (lookup) {
+          // 1) User gave their rent → deterministic fairness verdict.
+          if (mentionsRent(lastUserMessage)) {
+            const verdictReply = composeVerdictReply(lookup);
+            if (verdictReply) {
+              return NextResponse.json({
+                reply: verdictReply,
+                suggestions: ["What fees should I expect?", "How do I negotiate rent?"],
+              });
+            }
           }
-        }
-        // 2) User is asking what rent costs / the average → answer it directly
-        //    instead of interrogating them for their own rent.
-        if (asksAverage(lastUserMessage)) {
-          const avgReply = composeAverageReply(lookup);
-          if (avgReply) {
-            return NextResponse.json({
-              reply: avgReply,
-              suggestions: ["Is my rent fair?", "What fees should I expect?"],
-            });
+          // 2) User asking the average → answer directly; if we lack their exact
+          //    area, be honest and offer areas we do have + invite contribution.
+          if (asksAverage(lastUserMessage)) {
+            const hasAreaData = lookup.actual?.level === "area" || lookup.asking?.level === "area";
+            const altAreas = askedArea && !hasAreaData ? await areasInState(state) : [];
+            const avgReply = composeAverageReply(lookup, askedArea, altAreas);
+            if (avgReply) {
+              return NextResponse.json({
+                reply: avgReply,
+                suggestions: ["Is my rent fair?", "Add my rent data"],
+              });
+            }
           }
+          // 3) Otherwise ground the LLM with real figures while gathering details.
+          const hint = buildGatheringHint(lookup);
+          if (hint) systemPrompt = `${SYSTEM_PROMPT}\n\n${hint}`;
         }
-        // 3) Otherwise ground the LLM with the real figures while it gathers details.
-        const hint = buildGatheringHint(lookup);
-        if (hint) systemPrompt = `${SYSTEM_PROMPT}\n\n${hint}`;
       }
     }
 
