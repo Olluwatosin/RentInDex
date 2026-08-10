@@ -160,17 +160,15 @@ function composeAverageReply(
     return parts.join("\n\n");
   }
 
-  // Case 2: we have real (area-level, or a generic no-area) data — give it.
+  // Case 2: we have real data — give it, labelling each band by its true
+  // geography (never present state-wide numbers as if they were area-specific).
   const band = d.actual ?? d.asking;
   if (!band) return null;
-  const place = d.area ?? d.state;
-  const parts: string[] = [];
-  if (d.actual) {
-    parts.push(`💰 For a ${type} in ${place}, renters told us they typically pay ${bandRange(d.actual)} a year.`);
-    if (d.asking) parts.push(`Agents advertise similar ones around ${bandRange(d.asking)} — asking prices always run higher.`);
-  } else {
-    parts.push(`💰 For a ${type} in ${place}, listings are advertised around ${bandRange(d.asking!)} a year. Note: these are asking prices — real renters often pay less.`);
-  }
+  const scope = (lvl: string) =>
+    lvl === "area" && d.area ? `in ${d.area}` : `across ${d.state}${d.area ? " (state-wide — not " + d.area + "-specific yet)" : ""}`;
+  const parts: string[] = [`💰 Here's what I have for a ${type}:`];
+  if (d.actual) parts.push(`Renters ${scope(d.actual.level)} told us they typically pay ${bandRange(d.actual)} a year.`);
+  if (d.asking) parts.push(`Agents advertise them ${scope(d.asking.level)} around ${bandRange(d.asking)} — asking prices run higher than what people actually pay.`);
   parts.push(`Want me to check if a specific rent is fair, or add your own? Just tell me the yearly amount 🙂`);
   return parts.join("\n\n");
 }
