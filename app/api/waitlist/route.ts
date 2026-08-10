@@ -20,21 +20,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const ownerEmail = process.env.OWNER_EMAIL;
-    if (!ownerEmail) {
-      console.error("OWNER_EMAIL env var not set");
-      return NextResponse.json({ error: "Server misconfiguration." }, { status: 500 });
-    }
-
     const normalized = email.trim().toLowerCase();
 
+    // Save the contact (the important part) first — never let a missing owner
+    // email or a notification failure break the user's signup.
     addWaitlistContact(normalized).catch(() => {});
 
-    await sendEmail({
-      to: ownerEmail,
-      subject: `New waitlist signup: ${normalized}`,
-      html: `<p><strong>${normalized}</strong> just joined the RentInDex waitlist.</p>`,
-    });
+    const ownerEmail = process.env.OWNER_EMAIL;
+    if (ownerEmail) {
+      sendEmail({
+        to: ownerEmail,
+        subject: `New waitlist signup: ${normalized}`,
+        html: `<p><strong>${normalized}</strong> just joined the RentInDex waitlist.</p>`,
+      }).catch(() => {});
+    }
 
     sendEmail({
       to: normalized,
