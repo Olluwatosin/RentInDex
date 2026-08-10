@@ -22,6 +22,7 @@ const features = [
     color: "from-green-50 to-emerald-50",
     accent: "#1B4332",
     badge: "Core Feature",
+    starter: "What's the average rent for a 2 bedroom flat in Lekki, Lagos?",
   },
   {
     icon: (
@@ -41,6 +42,7 @@ const features = [
     color: "from-amber-50 to-yellow-50",
     accent: "#D97706",
     badge: "Smart Tool",
+    starter: "What can I rent for ₦500,000 a year in Lagos?",
   },
   {
     icon: (
@@ -60,6 +62,7 @@ const features = [
     color: "from-blue-50 to-indigo-50",
     accent: "#2563EB",
     badge: "Negotiation Tool",
+    starter: "Is my rent fair?",
   },
   {
     icon: (
@@ -79,6 +82,7 @@ const features = [
     color: "from-purple-50 to-pink-50",
     accent: "#7C3AED",
     badge: "Budget Planner",
+    starter: "Help me work out my total move-in cost",
   },
 ];
 
@@ -87,7 +91,7 @@ export default function Solution() {
   const isInView = useInView(ref, { once: true, margin: "-80px" });
 
   return (
-    <section className="py-24 bg-gray-50" ref={ref}>
+    <section id="solution" className="py-24 bg-gray-50" ref={ref}>
       <div className="max-w-6xl mx-auto px-6">
         {/* Section header */}
         <motion.div
@@ -111,12 +115,18 @@ export default function Solution() {
         {/* Feature cards */}
         <div className="grid sm:grid-cols-2 gap-6">
           {features.map((feature, i) => (
-            <motion.div
+            <motion.button
               key={i}
+              type="button"
+              onClick={() =>
+                window.dispatchEvent(
+                  new CustomEvent("open-rentbot", { detail: { prompt: feature.starter } })
+                )
+              }
               initial={{ opacity: 0, y: 40 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
               transition={{ duration: 0.6, delay: i * 0.1 }}
-              className={`relative bg-gradient-to-br ${feature.color} rounded-2xl p-8 border border-white hover:shadow-lg transition-all duration-300`}
+              className={`relative text-left w-full bg-gradient-to-br ${feature.color} rounded-2xl p-8 border border-white hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300 cursor-pointer`}
             >
               {/* Badge */}
               <span
@@ -144,12 +154,14 @@ export default function Solution() {
               </p>
               <p className="text-gray-600 leading-relaxed">{feature.description}</p>
 
-              {/* Coming soon indicator */}
+              {/* Live — opens RentBot */}
               <div className="mt-6 flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse" />
-                <span className="text-xs text-gray-400 font-medium">Coming soon</span>
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                <span className="text-xs font-semibold" style={{ color: feature.accent }}>
+                  Try it now with RentBot →
+                </span>
               </div>
-            </motion.div>
+            </motion.button>
           ))}
         </div>
       </div>

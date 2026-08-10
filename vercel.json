@@ -5,5 +5,11 @@
   "installCommand": "npm install",
   "env": {
     "NEXT_PUBLIC_SITE_URL": "https://rentindex.com.ng"
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/keepalive",
+      "schedule": "0 6 * * *"
+    }
+  ]
 }

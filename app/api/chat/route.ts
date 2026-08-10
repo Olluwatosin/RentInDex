@@ -121,6 +121,40 @@ function composeVerdictReply(d: RentLookup): string | null {
   return parts.join("\n\n");
 }
 
+// Is the user asking what rent costs / the average (vs "is MY rent fair")?
+function asksAverage(text: string): boolean {
+  return /\b(average|typical|going rate|how much|what.?s the (?:rent|price|cost)|price of|cost of|rent for|rents? (?:in|for|like)|market rate|expensive|afford)\b/i.test(
+    text
+  );
+}
+
+// Deterministically answer "what's the average rent for X in Y" from real data,
+// even when the user hasn't given their own rent. Prefers actual-paid figures.
+function composeAverageReply(d: RentLookup): string | null {
+  const band = d.actual ?? d.asking;
+  if (!band) return null;
+  const src = d.actual ? d.actual : d.asking!;
+  const type = d.property_type ?? "place";
+  const place = d.area ?? d.state;
+
+  const parts: string[] = [];
+  if (d.actual) {
+    parts.push(
+      `💰 For a ${type} in ${place}, renters told us they typically pay ${bandRange(d.actual)} a year.`
+    );
+    if (d.asking) parts.push(`Agents advertise similar ones around ${bandRange(d.asking)} — asking prices always run higher.`);
+  } else {
+    parts.push(
+      `💰 For a ${type} in ${place}, listings are advertised around ${bandRange(d.asking!)} a year. Note: these are asking prices — real renters often pay less.`
+    );
+  }
+  if (src.level === "state" || d.confidence === "low") {
+    parts.push(`⚠️ This is a ${d.state}-wide estimate — we're still gathering ${d.area ?? "area"}-level data.`);
+  }
+  parts.push(`Want me to check if a specific rent is fair? Just tell me the yearly amount 🙂`);
+  return parts.join("\n\n");
+}
+
 // When we don't yet have enough for a verdict, give the LLM the real figures
 // as context so it can keep the conversation grounded while gathering details.
 function buildGatheringHint(d: RentLookup): string | null {
@@ -221,8 +255,8 @@ export async function POST(req: NextRequest) {
         annualRent: fields?.annual_rent ?? null,
       });
       if (lookup) {
-        // Deliver the verdict deterministically on the turn the user supplies
-        // their rent — exact numbers, no LLM in the money-advice path.
+        // 1) User gave their rent → deliver the fairness verdict deterministically
+        //    (exact numbers, no LLM in the money-advice path).
         if (mentionsRent(lastUserMessage)) {
           const verdictReply = composeVerdictReply(lookup);
           if (verdictReply) {
@@ -232,7 +266,18 @@ export async function POST(req: NextRequest) {
             });
           }
         }
-        // Otherwise ground the LLM with the real figures while it gathers details.
+        // 2) User is asking what rent costs / the average → answer it directly
+        //    instead of interrogating them for their own rent.
+        if (asksAverage(lastUserMessage)) {
+          const avgReply = composeAverageReply(lookup);
+          if (avgReply) {
+            return NextResponse.json({
+              reply: avgReply,
+              suggestions: ["Is my rent fair?", "What fees should I expect?"],
+            });
+          }
+        }
+        // 3) Otherwise ground the LLM with the real figures while it gathers details.
         const hint = buildGatheringHint(lookup);
         if (hint) systemPrompt = `${SYSTEM_PROMPT}\n\n${hint}`;
       }

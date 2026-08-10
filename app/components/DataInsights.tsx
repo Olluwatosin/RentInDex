@@ -164,22 +164,71 @@ function RentTooltip({ active, payload }: { active?: boolean; payload?: { payloa
 
 // ─── main export ─────────────────────────────────────────────────────────────
 
+interface Insights {
+  totals: { responses: number; states: number; cities: number; listings: number };
+  heroSignedLeasePct: number;
+  feeCards: number[];
+  topStates: { state: string; pct: number }[];
+  rentRanges: { range: string; pct: number; highlight: boolean }[];
+  starRatings: { stars: number; label: string; pct: number }[];
+  propertyTypes: { type: string; pct: number }[];
+  foundViaAgentPct: number;
+  foundViaWebsitePct: number;
+  landlords: { readyToList: number; knowInterested: number; total: number };
+}
+
 export default function DataInsights() {
   const [responseCount, setResponseCount] = useState(142);
+  const [live, setLive] = useState<Insights | null>(null);
 
   useEffect(() => {
-    fetch("/api/response-count")
-      .then((res) => res.json())
-      .then((data) => {
-        if (typeof data.count === "number" && data.count > 0) {
-          setResponseCount(data.count);
+    fetch("/api/insights")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: Insights | null) => {
+        if (data && data.totals?.responses > 0) {
+          setLive(data);
+          // headline counter animates to the combined data-point total
+          setResponseCount(data.totals.responses + data.totals.listings);
         }
       })
-      .catch(() => setResponseCount(142));
+      .catch(() => {
+        // fall back to the response-count endpoint for at least a live counter
+        fetch("/api/response-count")
+          .then((res) => res.json())
+          .then((d) => typeof d.count === "number" && d.count > 0 && setResponseCount(d.count))
+          .catch(() => {});
+      });
   }, []);
 
+  // Live data when available, otherwise the seeded defaults.
+  const heroStats = live
+    ? [
+        // Headline: real survey data + scraped listings, honestly labelled.
+        { value: live.totals.responses + live.totals.listings, suffix: "+", label: "Rent Data Points" },
+        { value: live.totals.responses, suffix: "", label: "Renters Surveyed" },
+        { value: live.totals.states, suffix: "", label: "States Covered" },
+        { value: live.totals.cities, suffix: "", label: "Areas Represented" },
+      ]
+    : HERO_STATS;
+  const feeCards = live ? FEE_CARDS.map((c, i) => ({ ...c, pct: live.feeCards[i] ?? c.pct })) : FEE_CARDS;
+  const topStates = live?.topStates.length ? live.topStates : TOP_STATES;
+  const topStateMax = Math.max(...topStates.map((s) => s.pct), 1);
+  const rentRanges = live?.rentRanges.length ? live.rentRanges : RENT_RANGES;
+  const starRatings = live?.starRatings.length ? live.starRatings : STAR_RATINGS;
+  const propertyTypes = live?.propertyTypes.length
+    ? live.propertyTypes
+    : [
+        { type: "2-bed flat", pct: 33 },
+        { type: "Self-contained", pct: 24 },
+        { type: "1-bed flat", pct: 20 },
+        { type: "3-bed flat", pct: 9 },
+      ];
+  const landlords = live?.landlords ?? { readyToList: 11, knowInterested: 40, total: 51 };
+  const agentPct = live?.foundViaAgentPct ?? 55;
+  const websitePct = live?.foundViaWebsitePct ?? 1.4;
+
   return (
-    <section className="bg-gray-50">
+    <section id="insights" className="bg-gray-50">
       {/* ── 1. Stats bar ─────────────────────────────────────────────────── */}
       <div className="bg-[#1B4332] py-14 sm:py-16">
         <div className="max-w-6xl mx-auto px-6">
@@ -193,7 +242,7 @@ export default function DataInsights() {
             RentInDex By The Numbers
           </motion.p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8 divide-x-0 md:divide-x divide-white/10">
-            {HERO_STATS.map((s, i) => (
+            {heroStats.map((s, i) => (
               <StatCounter
                 key={i}
                 value={i === 0 ? responseCount : s.value}
@@ -228,7 +277,7 @@ export default function DataInsights() {
           </motion.div>
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-            {FEE_CARDS.map((c, i) => (
+            {feeCards.map((c, i) => (
               <FeeCard
                 key={i}
                 icon={c.icon}
@@ -248,8 +297,8 @@ export default function DataInsights() {
           >
             <span className="text-3xl">💡</span>
             <p className="text-gray-700 text-sm leading-relaxed">
-              <strong className="text-gray-900">Only 1.4% of renters</strong> found their house through a property website.{" "}
-              <strong className="text-gray-900">55% relied on a real estate agent</strong> — the very person charging the fees.
+              <strong className="text-gray-900">Only {websitePct}% of renters</strong> found their house through a property website.{" "}
+              <strong className="text-gray-900">{agentPct}% relied on a real estate agent</strong> — the very person charging the fees.
             </p>
           </motion.div>
         </div>
@@ -272,12 +321,13 @@ export default function DataInsights() {
               Top 5 states in our survey
             </h2>
             <p className="mt-3 text-gray-500">
-              Data from renters across 15 states — Abuja and Ekiti lead the way.
+              Data from renters across {live?.totals.states ?? 15} states — {topStates[0]?.state ?? "Ekiti"} and{" "}
+              {topStates[1]?.state ?? "Abuja"} lead the way.
             </p>
           </motion.div>
 
           <div className="space-y-5">
-            {TOP_STATES.map((s, i) => (
+            {topStates.map((s, i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, x: -20 }}
@@ -292,7 +342,7 @@ export default function DataInsights() {
                 <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
-                    whileInView={{ width: `${(s.pct / 28) * 100}%` }}
+                    whileInView={{ width: `${(s.pct / topStateMax) * 100}%` }}
                     viewport={{ once: true }}
                     transition={{ duration: 1, delay: i * 0.08 + 0.2, ease: "easeOut" }}
                     className="h-full rounded-full bg-[#1B4332]"
@@ -310,9 +360,9 @@ export default function DataInsights() {
             className="mt-10 grid grid-cols-3 gap-4"
           >
             {[
-              { n: "11", label: "Landlords ready to list" },
-              { n: "40", label: "Know interested landlords" },
-              { n: "51", label: "Total landlord connections" },
+              { n: String(landlords.readyToList), label: "Landlords ready to list" },
+              { n: String(landlords.knowInterested), label: "Know interested landlords" },
+              { n: String(landlords.total), label: "Total landlord connections" },
             ].map((item, i) => (
               <div key={i} className="bg-[#1B4332]/5 rounded-2xl p-5 text-center">
                 <p className="text-3xl font-extrabold text-[#1B4332]">{item.n}</p>
@@ -353,7 +403,7 @@ export default function DataInsights() {
           >
             <ResponsiveContainer width="100%" height={280}>
               <BarChart
-                data={RENT_RANGES}
+                data={rentRanges}
                 margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
                 barCategoryGap="30%"
               >
@@ -372,7 +422,7 @@ export default function DataInsights() {
                 />
                 <Tooltip content={<RentTooltip />} cursor={{ fill: "rgba(27,67,50,0.04)" }} />
                 <Bar dataKey="pct" radius={[6, 6, 0, 0]}>
-                  {RENT_RANGES.map((entry, i) => (
+                  {rentRanges.map((entry, i) => (
                     <Cell
                       key={i}
                       fill={entry.highlight ? "#F59E0B" : "#1B4332"}
@@ -401,14 +451,9 @@ export default function DataInsights() {
             transition={{ duration: 0.5, delay: 0.4 }}
             className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-3"
           >
-            {[
-              { type: "2-bed flat", pct: "33%" },
-              { type: "Self-contained", pct: "24%" },
-              { type: "1-bed flat", pct: "20%" },
-              { type: "3-bed flat", pct: "9%" },
-            ].map((p, i) => (
+            {propertyTypes.map((p, i) => (
               <div key={i} className="bg-white rounded-xl border border-gray-100 p-4 text-center">
-                <p className="text-2xl font-extrabold text-[#1B4332]">{p.pct}</p>
+                <p className="text-2xl font-extrabold text-[#1B4332]">{p.pct}%</p>
                 <p className="text-xs text-gray-500 mt-1">{p.type}</p>
               </div>
             ))}
@@ -436,7 +481,7 @@ export default function DataInsights() {
 
           <div className="grid md:grid-cols-2 gap-10 items-center">
             <div className="space-y-4">
-              {STAR_RATINGS.map((r, i) => (
+              {starRatings.map((r, i) => (
                 <motion.div
                   key={i}
                   initial={{ opacity: 0, x: -16 }}

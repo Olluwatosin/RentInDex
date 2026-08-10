@@ -5,14 +5,14 @@ const GOOGLE_FORM_URL =
 
 const links = {
   Product: [
-    { label: "Rent Index", href: "#", comingSoon: true },
-    { label: "Budget Matcher", href: "#", comingSoon: true },
-    { label: "Fairness Score", href: "#", comingSoon: true },
-    { label: "Move-in Calculator", href: "#", comingSoon: true },
+    { label: "Check Your Rent", href: "#solution", comingSoon: false },
+    { label: "Average Rent by Area", href: "#solution", comingSoon: false },
+    { label: "Fairness Score", href: "#solution", comingSoon: false },
+    { label: "Rent Insights", href: "#insights", comingSoon: false },
   ],
   Company: [
     { label: "How It Works", href: "/#how-it-works", comingSoon: false },
-    { label: "Contact", href: "mailto:hello@rentindex.ng", comingSoon: false },
+    { label: "Contact", href: "mailto:founder@rentindex.com.ng", comingSoon: false },
     { label: "Privacy Policy", href: "/privacy", comingSoon: false },
   ],
   Data: [

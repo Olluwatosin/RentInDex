@@ -37,10 +37,22 @@ export default function ChatBot() {
   );
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
+
+  // Feature cards elsewhere on the page open RentBot with a starter question.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const prompt = (e as CustomEvent).detail?.prompt as string | undefined;
+      setIsOpen(true);
+      if (prompt) setPendingPrompt(prompt);
+    };
+    window.addEventListener("open-rentbot", handler);
+    return () => window.removeEventListener("open-rentbot", handler);
+  }, []);
 
   useEffect(() => {
     if (isOpen) setTimeout(() => inputRef.current?.focus(), 300);
@@ -132,6 +144,16 @@ export default function ChatBot() {
       setIsTyping(false);
     }
   };
+
+  // Once the panel is open, fire any starter prompt from a feature card.
+  useEffect(() => {
+    if (isOpen && pendingPrompt && !isTyping) {
+      const p = pendingPrompt;
+      setPendingPrompt(null);
+      sendMessage(p);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, pendingPrompt]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {

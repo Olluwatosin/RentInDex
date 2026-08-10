@@ -101,6 +101,33 @@ export async function rentLookup(params: {
   return (await res.json()) as RentLookup;
 }
 
+// Fetch all renter rows (columns needed for homepage insights aggregation).
+export async function fetchRenterRows(): Promise<unknown[]> {
+  const cols = [
+    "state", "city", "area_raw", "property_type", "rent_estimate", "value_rating",
+    "lease_period", "found_via", "landlord_interest", "agency_fee_raw", "agency_fee",
+    "finder_fee_raw", "finder_fee", "caution_deposit_raw", "caution_deposit",
+    "service_charge_raw", "service_charge", "is_outlier",
+  ].join(",");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/renter_data?select=${cols}`, {
+    headers: headers(),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`fetchRenterRows failed (${res.status})`);
+  return res.json();
+}
+
+export async function countListings(): Promise<number> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/listings_data?select=id`, {
+    method: "HEAD",
+    headers: { ...headers(), Prefer: "count=exact" },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`countListings failed (${res.status})`);
+  const total = res.headers.get("content-range")?.split("/")[1];
+  return total ? parseInt(total, 10) : 0;
+}
+
 export async function getResponseCount(): Promise<number> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/renter_data?select=id`, {
     method: "HEAD",
