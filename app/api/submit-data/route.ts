@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
 import { rateLimit } from "@/app/lib/rate-limit";
 import { dbConfigured, insertRenterRow } from "@/app/lib/db";
+import { sendEmail } from "@/app/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -47,10 +47,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (ownerEmail) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
-
-      await resend.emails.send({
-      from: "RentInDex <onboarding@resend.dev>",
+      await sendEmail({
       to: ownerEmail,
       subject: `📊 New rent data: ${propertyType} in ${area}, ${state}`,
       html: `
@@ -88,8 +85,7 @@ export async function POST(req: NextRequest) {
       });
 
       if (email && email.includes("@")) {
-        resend.emails.send({
-        from: "RentInDex <onboarding@resend.dev>",
+        sendEmail({
         to: email,
         subject: "Thanks for contributing to RentInDex! 🏠",
         html: `
@@ -100,11 +96,11 @@ export async function POST(req: NextRequest) {
               at <strong>${rentRange}</strong>/year.
             </p>
             <p style="color:#444;line-height:1.6">
-              Your response joins 142+ others helping us build Nigeria's first real rent
-              intelligence platform. We'll give you free early access when we launch in Abuja.
+              Your response joins hundreds of others building Nigeria's first real rent
+              intelligence platform. You can check if any rent is fair right now with RentBot.
             </p>
             <p style="color:#888;font-size:13px;margin-top:32px">
-              — The RentInDex team · Powered by Smat Concept · <a href="https://rentindex.com.ng">rentindex.com.ng</a>
+              — The RentInDex team · founder@rentindex.com.ng · <a href="https://rentindex.com.ng">rentindex.com.ng</a>
             </p>
           </div>
         `,

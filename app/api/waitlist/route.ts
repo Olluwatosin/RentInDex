@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
+import { sendEmail, addWaitlistContact } from "@/app/lib/email";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  const resend = new Resend(process.env.RESEND_API_KEY);
   try {
     const body = await req.json();
     const { email } = body;
@@ -29,48 +28,36 @@ export async function POST(req: NextRequest) {
 
     const normalized = email.trim().toLowerCase();
 
-    if (process.env.RESEND_AUDIENCE_ID) {
-      resend.contacts.create({
-        audienceId: process.env.RESEND_AUDIENCE_ID,
-        email: normalized,
-        unsubscribed: false,
-      }).catch(() => {});
-    }
+    addWaitlistContact(normalized).catch(() => {});
 
-    await resend.emails.send({
-      from: "RentInDex <onboarding@resend.dev>",
+    await sendEmail({
       to: ownerEmail,
       subject: `New waitlist signup: ${normalized}`,
       html: `<p><strong>${normalized}</strong> just joined the RentInDex waitlist.</p>`,
     });
 
-    resend.emails.send({
-      from: "RentInDex <onboarding@resend.dev>",
+    sendEmail({
       to: normalized,
-      subject: "You're on the RentInDex waitlist!",
+      subject: "You're on the RentInDex waitlist! 🏠",
       html: `
         <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px">
           <h2 style="color:#1a1a1a">You're in!</h2>
           <p style="color:#444;line-height:1.6">
-            Thanks for joining the RentInDex waitlist. We're building Nigeria's first
-            rent intelligence platform — starting in Abuja — so you never get
-            overcharged on rent again.
+            Thanks for joining RentInDex — Nigeria's first rent intelligence platform.
+            You can already check if any rent is fair using our RentBot assistant on the site.
           </p>
           <p style="color:#444;line-height:1.6">
-            We'll send you an early-access invite the moment we launch.
+            We'll keep you posted as we add more tools and cover more areas.
           </p>
           <p style="color:#888;font-size:13px;margin-top:32px">
-            — The RentInDex team · Powered by Smat Concept
+            — The RentInDex team · founder@rentindex.com.ng
           </p>
         </div>
       `,
     }).catch(() => {});
 
     return NextResponse.json(
-      {
-        message:
-          "You're on the list! We'll notify you first when we launch in Abuja.",
-      },
+      { message: "You're on the list! Meanwhile, try RentBot to check your rent now." },
       { status: 201 }
     );
   } catch (err) {

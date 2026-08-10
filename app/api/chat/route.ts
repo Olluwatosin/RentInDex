@@ -47,11 +47,14 @@ function getSuggestions(userText: string, botReply: string): string[] {
 }
 
 const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
+// Round to a clean figure for display (nearest ₦10k) so medians of ranges don't
+// show ugly values like ₦1,250,001.
+const nairaClean = (n: number) => naira(Math.round(n / 10000) * 10000);
 
 function bandRange(b: { p25: number; p75: number; p50: number }) {
   // Bucketed data can collapse to a single value — show it cleanly, not "₦X–₦X".
-  if (b.p25 === b.p75) return `around ${naira(b.p50)}`;
-  return `${naira(b.p25)}–${naira(b.p75)} (typically ${naira(b.p50)})`;
+  if (b.p25 === b.p75) return `around ${nairaClean(b.p50)}`;
+  return `${nairaClean(b.p25)}–${nairaClean(b.p75)} (typically ${nairaClean(b.p50)})`;
 }
 
 // Does the text mention a rent-like amount? Used to decide when the user has

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { callLLM } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
 import { dbConfigured, insertRenterRow } from "@/app/lib/db";
-import { Resend } from "resend";
+import { sendEmail } from "@/app/lib/email";
 import { rateLimit } from "@/app/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -134,10 +134,8 @@ ${conversation}`;
       }
     }
 
-    if (process.env.RESEND_API_KEY && process.env.OWNER_EMAIL) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      resend.emails.send({
-        from: "RentInDex <onboarding@resend.dev>",
+    if (process.env.OWNER_EMAIL) {
+      sendEmail({
         to: process.env.OWNER_EMAIL,
         subject: `📊 Chatbot rent data: ${data.property_type ?? "?"} in ${data.area ?? "?"}, ${data.state ?? "?"}`,
         html: `
