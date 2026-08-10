@@ -164,12 +164,23 @@ export async function GET() {
     return NextResponse.json({ error: "not_configured" }, { status: 503 });
   }
   try {
-    const [rows, listings] = await Promise.all([
-      fetchRenterRows(),
-      countListings().catch(() => 0),
-    ]);
-    return NextResponse.json(aggregate(rows as Row[], listings), {
-      headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600" },
+    // Sequential, not parallel: a just-woken free-tier DB can drop one of two
+    // concurrent requests. Do the heavy fetch first, then the light count.
+    const rows = (await fetchRenterRows()) as Row[];
+    let listings = 0;
+    let listingsOk = true;
+    try {
+      listings = await countListings();
+    } catch {
+      listingsOk = false; // transient — don't poison the cache with a 0
+    }
+    return NextResponse.json(aggregate(rows, listings), {
+      headers: {
+        // Only cache for long when the data is complete; otherwise let it self-heal.
+        "Cache-Control": listingsOk
+          ? "public, s-maxage=300, stale-while-revalidate=600"
+          : "public, s-maxage=10",
+      },
     });
   } catch (err) {
     console.error("insights error:", err);
