@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import BorderBeam from "./BorderBeam";
 
 interface Message {
   role: "user" | "bot";
@@ -178,6 +179,10 @@ export default function ChatBot() {
             className="fixed bottom-24 right-4 sm:right-6 z-50 w-[calc(100vw-32px)] sm:w-96 flex flex-col bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden"
             style={{ maxHeight: "min(600px, calc(100vh - 120px))" }}
           >
+            {/* Animated brand beam around the panel */}
+            <BorderBeam size={70} duration={7} borderRadius={16} colorFrom="#1B4332" colorTo="#F59E0B" />
+            <BorderBeam size={70} duration={7} delay={3.5} borderRadius={16} colorFrom="#F59E0B" colorTo="#1B4332" />
+
             {/* Header */}
             <div className="bg-[#1B4332] px-4 py-3 flex items-center justify-between flex-shrink-0">
               <div className="flex items-center gap-3">

@@ -3,12 +3,9 @@
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 
-const GOOGLE_FORM_URL =
-  "https://docs.google.com/forms/d/e/1FAIpQLScnKYPOeajElWeapoxLw1ZP7dKEvpqeUb-NwzIw61kKqq0YOQ/viewform";
-
 export default function Hero() {
   const [scrolled, setScrolled] = useState(false);
-  const [responseCount, setResponseCount] = useState(142);
+  const [totals, setTotals] = useState({ dataPoints: 800, states: 22 });
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 10);
@@ -17,25 +14,31 @@ export default function Hero() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/response-count")
-      .then((res) => res.json())
-      .then((data) => {
-        if (typeof data.count === "number" && data.count > 0) {
-          setResponseCount(data.count);
+    fetch("/api/insights")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d) => {
+        if (d?.totals?.responses > 0) {
+          setTotals({
+            dataPoints: d.totals.responses + d.totals.listings,
+            states: d.totals.states,
+          });
         }
       })
-      .catch(() => setResponseCount(142));
+      .catch(() => {});
   }, []);
 
   const stats = [
-    { value: `${responseCount}+`, label: "renters surveyed across Nigeria" },
-    { value: "Abuja", label: "launching first" },
+    { value: `${totals.dataPoints.toLocaleString()}+`, label: "rent data points analysed" },
+    { value: `${totals.states}`, label: "states covered" },
     { value: "40-50%", label: "hidden fee inflation" },
   ];
 
   const scrollToWaitlist = () => {
     document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" });
   };
+
+  const openRentBot = () =>
+    window.dispatchEvent(new CustomEvent("open-rentbot", { detail: {} }));
 
   return (
     <>
@@ -138,10 +141,10 @@ export default function Hero() {
               className="flex flex-col sm:flex-row gap-4"
             >
               <button
-                onClick={scrollToWaitlist}
+                onClick={openRentBot}
                 className="inline-flex items-center justify-center gap-2 bg-[#F59E0B] hover:bg-[#D97706] text-white font-bold px-8 py-4 rounded-full text-base transition-all duration-200 hover:shadow-xl hover:-translate-y-1"
               >
-                Join the Waitlist
+                Check Your Rent Now
                 <svg
                   className="w-5 h-5"
                   fill="none"
@@ -157,27 +160,12 @@ export default function Hero() {
                 </svg>
               </button>
 
-              <a
-                href={GOOGLE_FORM_URL}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={scrollToWaitlist}
                 className="inline-flex items-center justify-center gap-2 bg-white/10 hover:bg-white/20 border border-white/30 text-white font-semibold px-8 py-4 rounded-full text-base transition-all duration-200"
               >
-                Fill Our Data Form
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
-                  />
-                </svg>
-              </a>
+                Join the Waitlist
+              </button>
             </motion.div>
 
             {/* Stats row */}
