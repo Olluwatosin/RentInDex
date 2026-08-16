@@ -23,9 +23,9 @@ const HERO_STATS = [
 
 const FEE_CARDS = [
   { icon: "⚖️", pct: 82, label: "Paid agency / lawyer fees" },
-  { icon: "🔍", pct: 73, label: "Also paid a finder's fee" },
-  { icon: "🔒", pct: 60, label: "Paid caution / security deposit" },
-  { icon: "🏢", pct: 42, label: "Paid service charge on top" },
+  { icon: "🔍", pct: 64, label: "Also paid a finder's fee" },
+  { icon: "🔒", pct: 62, label: "Paid caution / security deposit" },
+  { icon: "🏢", pct: 41, label: "Paid service charge on top" },
 ];
 
 const TOP_STATES = [

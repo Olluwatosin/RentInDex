@@ -8,6 +8,7 @@ const links = {
     { label: "Check Your Rent", href: "#solution", comingSoon: false },
     { label: "Average Rent by Area", href: "#solution", comingSoon: false },
     { label: "Fairness Score", href: "#solution", comingSoon: false },
+    { label: "Move-in Cost Calculator", href: "/calculator", comingSoon: false },
     { label: "Rent Insights", href: "#insights", comingSoon: false },
   ],
   Company: [

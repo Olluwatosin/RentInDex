@@ -2,6 +2,7 @@
 
 import { motion, useInView } from "framer-motion";
 import { useRef } from "react";
+import { useRouter } from "next/navigation";
 
 const features = [
   {
@@ -83,12 +84,14 @@ const features = [
     accent: "#7C3AED",
     badge: "Budget Planner",
     starter: "Help me work out my total move-in cost",
+    href: "/calculator",
   },
 ];
 
 export default function Solution() {
   const ref = useRef(null);
   const isInView = useInView(ref, { once: true, margin: "-80px" });
+  const router = useRouter();
 
   return (
     <section id="solution" className="py-24 bg-gray-50" ref={ref}>
@@ -119,9 +122,11 @@ export default function Solution() {
               key={i}
               type="button"
               onClick={() =>
-                window.dispatchEvent(
-                  new CustomEvent("open-rentbot", { detail: { prompt: feature.starter } })
-                )
+                "href" in feature && feature.href
+                  ? router.push(feature.href)
+                  : window.dispatchEvent(
+                      new CustomEvent("open-rentbot", { detail: { prompt: feature.starter } })
+                    )
               }
               initial={{ opacity: 0, y: 40 }}
               animate={isInView ? { opacity: 1, y: 0 } : {}}
