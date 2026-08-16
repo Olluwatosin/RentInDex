@@ -7,10 +7,11 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://rentindex.com.ng"),
   title: "RentInDex — Know what rent should cost before you pay a kobo",
   description:
-    "Nigeria's first rent intelligence platform. Find fair rent prices, calculate true move-in costs, and never get overcharged again. Starting with Abuja.",
+    "Nigeria's first rent intelligence platform. Find fair rent prices, calculate true move-in costs, and never get overcharged again. Built on real data from renters and listings across Nigeria.",
   keywords: [
     "rent prices Nigeria",
     "Abuja rent",
+    "Lagos rent",
     "Nigeria rental market",
     "rent calculator",
     "fair rent",

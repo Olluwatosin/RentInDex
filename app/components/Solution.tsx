@@ -18,7 +18,7 @@ const features = [
     name: "Rent Index",
     tagline: "Fair prices by area",
     description:
-      "Browse verified rent ranges for every neighbourhood in Abuja — from Maitama to Kuje. Know the market before you even call an agent.",
+      "Browse verified rent ranges neighbourhood by neighbourhood — from Maitama to Lekki. Know the market before you even call an agent.",
     color: "from-green-50 to-emerald-50",
     accent: "#1B4332",
     badge: "Core Feature",

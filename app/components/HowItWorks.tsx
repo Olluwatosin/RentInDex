@@ -24,7 +24,7 @@ const steps = [
     step: "02",
     title: "See matching neighbourhoods",
     description:
-      "Instantly see all neighbourhoods in Abuja where your budget is realistic, with verified rent ranges, property types, and commute context.",
+      "Instantly see which neighbourhoods your budget is realistic for, with verified rent ranges, property types, and commute context.",
     icon: (
       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -126,10 +126,10 @@ export default function HowItWorks() {
           <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-6">
             <div>
               <h3 className="text-2xl font-bold text-white mb-2">
-                Launching first in Abuja
+                Live across Nigeria
               </h3>
               <p className="text-white/70">
-                We&apos;re starting with Nigeria&apos;s capital and expanding city by city.
+                Real rent data from renters and listings nationwide — deepening with every contribution.
               </p>
             </div>
             <div className="flex gap-3">

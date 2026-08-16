@@ -69,9 +69,9 @@ export default function Waitlist() {
               Be the first to know when we launch
             </h2>
             <p className="text-gray-500 text-lg mb-8 leading-relaxed">
-              RentInDex is in active development. Your rent data helps us build
-              the most accurate rent intelligence in Nigeria — join the waitlist
-              and get early access when we launch in Abuja.
+              RentInDex is live and growing. Your rent data helps us build the
+              most accurate rent intelligence in Nigeria — join the list to get
+              new areas, features, and reports first.
             </p>
 
             {/* Social proof */}
@@ -274,7 +274,7 @@ export default function Waitlist() {
                     </div>
                     <h4 className="text-xl font-bold text-gray-900 mb-2">You&apos;re on the list!</h4>
                     <p className="text-gray-500 text-sm leading-relaxed mb-6">
-                      We&apos;ll notify you first when RentInDex launches in Abuja.
+                      We&apos;ll tell you first as new areas and features go live.
                     </p>
                     <a
                       href={GOOGLE_FORM_URL}

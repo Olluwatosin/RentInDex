@@ -22,7 +22,7 @@ const STARTER_QUESTIONS = [
 const WELCOME: Message = {
   role: "bot",
   content:
-    "Hey! 👋 I'm RentBot — your guide to fair rent in Nigeria. Ask me about rent prices, move-in costs, or whether your rent is fair. Starting with Abuja! 🏠",
+    "Hey! 👋 I'm RentBot — your guide to fair rent in Nigeria. Ask me about rent prices, move-in costs, or whether your rent is fair. 🏠",
 };
 
 export default function ChatBot() {

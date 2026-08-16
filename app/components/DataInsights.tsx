@@ -321,7 +321,7 @@ export default function DataInsights() {
               Top 5 states in our survey
             </h2>
             <p className="mt-3 text-gray-500">
-              Data from renters across {live?.totals.states ?? 15} states — {topStates[0]?.state ?? "Ekiti"} and{" "}
+              Data from renters across {live?.totals.states ?? 18} states — {topStates[0]?.state ?? "Ekiti"} and{" "}
               {topStates[1]?.state ?? "Abuja"} lead the way.
             </p>
           </motion.div>

@@ -125,7 +125,7 @@ export default function Footer() {
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#F59E0B] animate-pulse" />
             <span className="text-white/30 text-sm">
-              Actively collecting data — Abuja
+              Actively collecting data — nationwide
             </span>
           </div>
         </div>
