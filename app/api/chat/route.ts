@@ -3,6 +3,7 @@ import { callLLM } from "@/app/lib/llm";
 import { rateLimit } from "@/app/lib/rate-limit";
 import { dbConfigured, rentLookup, RentLookup, areasInState, stateForArea } from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
+import { parseAmounts, userTurnsOnly, amountCorroborated } from "@/app/lib/amounts";
 
 const SYSTEM_PROMPT = `You are RentBot — the AI assistant for RentInDex, Nigeria's first rent intelligence platform.
 
@@ -102,10 +103,19 @@ function composeVerdictReply(d: RentLookup): string | null {
   // The other band, as brief context.
   const other = d.verdict_basis === "actual" ? d.asking : d.actual;
   if (other) {
+    // Name the contrast band's geography whenever it differs from the band the
+    // verdict rests on — unlabelled, the two figures read as directly
+    // comparable when they describe different places.
+    const where =
+      other.level === ref.level
+        ? ""
+        : other.level === "area" && d.area
+        ? ` in ${d.area}`
+        : ` across ${d.state}`;
     parts.push(
       d.verdict_basis === "actual"
-        ? `For context, agents advertise similar places around ${bandRange(other)}.`
-        : `Renters we've heard from pay around ${bandRange(other)}.`
+        ? `For context, agents advertise similar places${where} around ${bandRange(other)}.`
+        : `Renters we've heard from${where} pay around ${bandRange(other)}.`
     );
   }
 
@@ -171,8 +181,37 @@ function composeAverageReply(
     lvl === "area" && d.area ? `in ${d.area}` : `across ${d.state}${d.area ? " (state-wide — not " + d.area + "-specific yet)" : ""}`;
   const parts: string[] = [`💰 Here's what I have for a ${type}:`];
   if (d.actual) parts.push(`Renters ${scope(d.actual.level)} told us they typically pay ${bandRange(d.actual)} a year.`);
-  if (d.asking) parts.push(`Agents advertise them ${scope(d.asking.level)} around ${bandRange(d.asking)} — asking prices run higher than what people actually pay.`);
-  parts.push(`Want me to check if a specific rent is fair, or add your own? Just tell me the yearly amount 🙂`);
+  if (d.asking) parts.push(`Agents advertise them ${scope(d.asking.level)} around ${bandRange(d.asking)}.`);
+
+  // "Asking runs higher than paid" is only an honest read when both bands
+  // describe the SAME place. Setting an area's listings against a state-wide
+  // renter average measures geography, not landlord markup — that's how a
+  // premium area like Gwarinpa gets reported as a huge overcharge.
+  if (d.actual && d.asking) {
+    if (d.actual.level === d.asking.level) {
+      if (d.asking.p50 > d.actual.p50) {
+        parts.push(`Asking prices here run higher than what people actually pay — useful leverage when you negotiate.`);
+      }
+    } else {
+      const areaLabel = d.area ?? "that area";
+      const areaIsRenters = d.actual.level === "area";
+      const narrow = areaIsRenters ? "renter" : "listing";
+      const wide = areaIsRenters ? "listing" : "renter";
+      parts.push(
+        `⚠️ Don't read a markup into those two — the ${narrow} figure is ${areaLabel}-specific while the ${wide} figure is ${d.state}-wide, so most of that gap is geography, not landlords. I need more ${wide} data for ${areaLabel} before I can tell you the real difference.`
+      );
+    }
+  }
+
+  // When the crowd figure isn't area-specific, the most useful thing the user
+  // can do is close that exact gap.
+  if (d.area && d.actual && d.actual.level !== "area") {
+    parts.push(
+      `👉 Renting around ${d.area}? Tell me your apartment type and yearly rent and I'll add it — that's how ${d.area} gets a real number of its own. Or give me any rent and I'll check if it's fair.`
+    );
+  } else {
+    parts.push(`Want me to check if a specific rent is fair, or add your own? Just tell me the yearly amount 🙂`);
+  }
   return parts.join("\n\n");
 }
 
@@ -273,6 +312,16 @@ export async function POST(req: NextRequest) {
     if (rentIntent && dbConfigured()) {
       const fields = await extractLookupFields(conversationText);
       const askedArea = fields?.area ?? null;
+      // The transcript we hand the extractor contains our own quoted medians, so
+      // the model can hand back one of them as "the user's rent" and we'd issue a
+      // verdict on a figure nobody gave us. Only honour a rent the user typed.
+      const statedAmounts = parseAmounts(userTurnsOnly(conversationText));
+      const userRent =
+        typeof fields?.annual_rent === "number" &&
+        fields.annual_rent > 0 &&
+        amountCorroborated(fields.annual_rent, statedAmounts)
+          ? fields.annual_rent
+          : null;
       // State may be named directly, or inferred from the area (e.g. "Gwarinpa" → Abuja).
       let state = detectState(conversationText);
       if (!state && askedArea) state = await stateForArea(askedArea);
@@ -282,7 +331,7 @@ export async function POST(req: NextRequest) {
           state,
           area: askedArea,
           propertyType: fields?.property_type ?? null,
-          annualRent: fields?.annual_rent ?? null,
+          annualRent: userRent,
         });
         if (lookup) {
           // 1) User gave their rent → deterministic fairness verdict.

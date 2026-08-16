@@ -4,6 +4,13 @@ import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
 import { dbConfigured, insertRenterRow } from "@/app/lib/db";
 import { sendEmail } from "@/app/lib/email";
 import { rateLimit } from "@/app/lib/rate-limit";
+import { detectState } from "@/app/lib/nigeria";
+import {
+  parseAmounts,
+  userTurnsOnly,
+  amountCorroborated,
+  mentionsPercentage,
+} from "@/app/lib/amounts";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +69,9 @@ export async function POST(req: NextRequest) {
 }
 
 Rules:
+- ONLY extract figures the User stated about their OWN home. The Bot lines quote
+  market averages and listing prices — those are NEVER the user's rent or fees.
+  If the User never gave a figure for a field, return null for it.
 - Convert ranges to midpoint (e.g. "800k to 1m" = 900000)
 - Convert percentages to amounts if rent is known
 - power_hours = approximate hours of electricity per day as a number 0–24 (e.g. "about 10 hours"=10, "6 to 12"=9, "18+"=18, "half a day"=12)
@@ -94,15 +104,49 @@ ${conversation}`;
       return NextResponse.json({ saved: false, reason: "need_state_and_rent" });
     }
 
+    const userText = userTurnsOnly(conversation);
+
+    // rent_lookup matches on an exact state string, and the rest of the app
+    // canonicalises to names like "FCT Abuja". The model hands back whatever the
+    // user typed ("Abuja"), so an uncanonicalised row is invisible to every
+    // lookup — it silently never joins the index it was collected for.
+    const canonicalState = detectState(data.state) ?? detectState(userText);
+    if (!canonicalState) {
+      return NextResponse.json({ saved: false, reason: "state_not_recognised" });
+    }
+
+    // The transcript includes RentBot's own replies, and those quote market
+    // medians ("renters typically pay ₦1,250,000"). Without this check the model
+    // reports one of OUR figures as the user's rent — saving a fabricated renter
+    // row and feeding our published averages back into our own dataset. A rent
+    // only counts if the USER actually typed it.
+    const statedAmounts = parseAmounts(userText);
+    if (!amountCorroborated(data.annual_rent!, statedAmounts)) {
+      return NextResponse.json({ saved: false, reason: "rent_not_stated_by_user" });
+    }
+
+    // Same contamination risk for the fee fields. Drop any the user didn't
+    // state — unless they gave a percentage, which the model converts to an
+    // amount that legitimately won't appear verbatim in their text.
+    if (!mentionsPercentage(userText)) {
+      const feeFields = ["agency_fee", "caution_deposit", "service_charge", "finder_fee"] as const;
+      for (const field of feeFields) {
+        const value = data[field];
+        if (typeof value === "number" && value > 0 && !amountCorroborated(value, statedAmounts)) {
+          data[field] = null;
+        }
+      }
+    }
+
     // Primary store: Supabase. The Google Sheet is kept as a dual-write
     // backup during the migration period.
     let stored = false;
-    if (dbConfigured() && data.state) {
+    if (dbConfigured()) {
       try {
         await insertRenterRow({
           source: "chatbot",
           conversation_id: convId, // upsert: one conversation = one row
-          state: data.state,
+          state: canonicalState,
           city: data.city,
           area_raw: data.area,
           property_type: data.property_type,
@@ -137,14 +181,14 @@ ${conversation}`;
     if (process.env.OWNER_EMAIL) {
       sendEmail({
         to: process.env.OWNER_EMAIL,
-        subject: `📊 Chatbot rent data: ${data.property_type ?? "?"} in ${data.area ?? "?"}, ${data.state ?? "?"}`,
+        subject: `📊 Chatbot rent data: ${data.property_type ?? "?"} in ${data.area ?? "?"}, ${canonicalState}`,
         html: `
           <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:24px;background:#f9f9f9;border-radius:12px">
             <h2 style="color:#1B4332">New Chatbot Rent Data</h2>
             <p style="color:#666;font-size:13px">Confidence: <strong>${data.confidence}</strong> · Source: chatbot</p>
             <table style="width:100%;border-collapse:collapse;margin-top:12px">
               ${[
-                ["State", data.state],
+                ["State", canonicalState],
                 ["City", data.city],
                 ["Area", data.area],
                 ["Property Type", data.property_type],
