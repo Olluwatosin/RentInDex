@@ -12,9 +12,6 @@
 //   node scripts/scrapers/npc.mjs --states=lagos,abuja --pages=5
 //   node scripts/scrapers/npc.mjs --dry-run           # parse but don't insert
 
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
@@ -67,14 +64,7 @@ const ALL_STATE_SLUGS = new Set([
 
 // ── env ───────────────────────────────────────────────────────────────────────
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const env = {};
-for (const line of readFileSync(resolve(repoRoot, ".env"), "utf8").split("\n")) {
-  const m = line.match(/^([A-Z_]+)=(.*)$/);
-  if (m) env[m[1]] = m[2].replace(/^"|"$/g, "");
-}
-const SUPABASE_URL = env.SUPABASE_URL;
-const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+import { SUPABASE_URL, SERVICE_KEY, startRun, finishRun } from "./run-env.mjs";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -269,9 +259,17 @@ async function main() {
   }
 
   console.log(`\nDone. Parsed ${totalParsed}${dryRun ? " (dry run, nothing inserted)" : `, sent ${totalInserted} (duplicates ignored by db)`}.`);
+
+  return { parsed: totalParsed, sent: totalInserted };
 }
 
-main().catch((err) => {
+// Record the run so a scheduled failure is visible instead of silent.
+const runId = await startRun("npc");
+try {
+  const summary = await main();
+  await finishRun(runId, { ok: true, ...summary });
+} catch (err) {
   console.error("Fatal:", err);
+  await finishRun(runId, { ok: false, error: err?.message ?? err });
   process.exit(1);
-});
+}

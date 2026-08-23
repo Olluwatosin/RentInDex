@@ -172,3 +172,75 @@ export async function getResponseCount(): Promise<number> {
   }
   return count;
 }
+
+export interface WaitlistInsert {
+  inserted: boolean;
+  alreadyPresent: boolean;
+}
+
+// Store a waitlist signup locally BEFORE any email provider is involved.
+// Signups used to live only in Brevo/Resend behind a swallowed catch, so a
+// provider outage lost the address while still telling the user they were on
+// the list. Throws on failure — the caller must not confirm what wasn't saved.
+export async function insertWaitlistEmail(
+  email: string,
+  source = "site"
+): Promise<WaitlistInsert> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/waitlist?on_conflict=email`,
+    {
+      method: "POST",
+      headers: {
+        ...headers(),
+        // ignore-duplicates makes a repeat signup a no-op rather than an error,
+        // and returns only genuinely inserted rows — so an empty array is an
+        // exact "already on the list" signal, with no timestamp guessing and no
+        // clobbering the original signup's source or date.
+        Prefer: "resolution=ignore-duplicates,return=representation",
+      },
+      body: JSON.stringify({ email, source }),
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`waitlist insert failed (${res.status}): ${await res.text()}`);
+  }
+  const rows = (await res.json()) as unknown[];
+  const isNew = rows.length > 0;
+  return { inserted: true, alreadyPresent: !isNew };
+}
+
+// Record that the address made it to the email provider, so unsynced rows can
+// be retried later without re-sending anything.
+export async function markWaitlistSynced(email: string, provider: string): Promise<void> {
+  await fetch(
+    `${SUPABASE_URL}/rest/v1/waitlist?email=eq.${encodeURIComponent(email)}`,
+    {
+      method: "PATCH",
+      headers: { ...headers(), Prefer: "return=minimal" },
+      body: JSON.stringify({
+        provider_synced: true,
+        provider,
+        provider_synced_at: new Date().toISOString(),
+      }),
+    }
+  ).catch(() => {});
+}
+
+export interface WaitlistRow {
+  email: string;
+  created_at: string;
+  source: string;
+  provider_synced: boolean;
+  provider: string | null;
+}
+
+// The waitlist, newest first — for the admin views. Reads our own table rather
+// than the email provider, which is now only a downstream sync.
+export async function fetchWaitlist(): Promise<WaitlistRow[]> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/waitlist?select=email,created_at,source,provider_synced,provider&order=created_at.desc`,
+    { headers: headers(), cache: "no-store" }
+  );
+  if (!res.ok) throw new Error(`fetchWaitlist failed (${res.status})`);
+  return res.json();
+}

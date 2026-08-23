@@ -19,9 +19,6 @@
 //   node scripts/scrapers/jiji.mjs --regions=lagos,abuja --pages=5
 //   node scripts/scrapers/jiji.mjs --dry-run
 
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 
 const API = "https://jiji.ng/api_web/v1/listing";
 const CATEGORY = "houses-apartments-for-rent";
@@ -58,14 +55,7 @@ const REGIONS = {
 };
 
 // ── env ───────────────────────────────────────────────────────────────────────
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const env = {};
-for (const line of readFileSync(resolve(repoRoot, ".env"), "utf8").split("\n")) {
-  const m = line.match(/^([A-Z_]+)=(.*)$/);
-  if (m) env[m[1]] = m[2].replace(/^"|"$/g, "");
-}
-const SUPABASE_URL = env.SUPABASE_URL;
-const SERVICE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+import { SUPABASE_URL, SERVICE_KEY, startRun, finishRun } from "./run-env.mjs";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -224,9 +214,17 @@ async function main() {
     `\nDone. Parsed ${totalParsed}, skipped ${skippedNonAnnual} non-annual (shortlets)` +
       `${dryRun ? " (dry run)" : `, sent ${totalSent} (dupes ignored by db)`}.`
   );
+
+  return { parsed: totalParsed, sent: totalSent };
 }
 
-main().catch((err) => {
+// Record the run so a scheduled failure is visible instead of silent.
+const runId = await startRun("jiji");
+try {
+  const summary = await main();
+  await finishRun(runId, { ok: true, ...summary });
+} catch (err) {
   console.error("Fatal:", err);
+  await finishRun(runId, { ok: false, error: err?.message ?? err });
   process.exit(1);
-});
+}

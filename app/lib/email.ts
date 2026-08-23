@@ -65,10 +65,14 @@ export async function sendEmail({ to, subject, html }: SendArgs): Promise<boolea
 
 // Add/refresh a contact on the waitlist list, for broadcasts. Uses Brevo if
 // configured (BREVO_LIST_ID), else Resend audience.
-export async function addWaitlistContact(email: string): Promise<void> {
+//
+// Returns the provider that accepted the contact, or null if none did. The
+// caller records that so unsynced signups can be retried — the durable copy
+// lives in our own database, not here.
+export async function addWaitlistContact(email: string): Promise<string | null> {
   if (BREVO_API_KEY) {
     try {
-      await fetch("https://api.brevo.com/v3/contacts", {
+      const res = await fetch("https://api.brevo.com/v3/contacts", {
         method: "POST",
         headers: {
           "api-key": BREVO_API_KEY,
@@ -81,10 +85,15 @@ export async function addWaitlistContact(email: string): Promise<void> {
           listIds: BREVO_LIST_ID ? [Number(BREVO_LIST_ID)] : undefined,
         }),
       });
+      if (!res.ok) {
+        console.error(`Brevo contact add failed (${res.status}): ${await res.text()}`);
+        return null;
+      }
+      return "brevo";
     } catch (err) {
       console.error("Brevo contact add error:", err);
+      return null;
     }
-    return;
   }
   if (process.env.RESEND_API_KEY && process.env.RESEND_AUDIENCE_ID) {
     try {
@@ -94,8 +103,11 @@ export async function addWaitlistContact(email: string): Promise<void> {
         email,
         unsubscribed: false,
       });
-    } catch {
-      /* best-effort */
+      return "resend";
+    } catch (err) {
+      console.error("Resend contact add error:", err);
+      return null;
     }
   }
+  return null;
 }

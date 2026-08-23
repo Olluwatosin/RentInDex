@@ -1,34 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Resend } from "resend";
+import { dbConfigured, fetchWaitlist } from "@/app/lib/db";
 
 export const dynamic = "force-dynamic";
 
+// Reads the `waitlist` table, not the email provider. Signups are stored locally
+// first now, so this shows the real list even when Brevo/Resend are unconfigured
+// — which is exactly the situation that previously made this endpoint useless.
 export async function GET(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get("secret");
-  if (!secret || secret !== process.env.ADMIN_SECRET) {
+  if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  const audienceId = process.env.RESEND_AUDIENCE_ID;
-  if (!audienceId) {
-    return NextResponse.json(
-      { error: "RESEND_AUDIENCE_ID env var not set" },
-      { status: 500 }
-    );
+  if (!dbConfigured()) {
+    return NextResponse.json({ error: "Database not configured" }, { status: 503 });
   }
 
-  const resend = new Resend(process.env.RESEND_API_KEY);
-  const { data, error } = await resend.contacts.list({ audienceId });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  try {
+    const rows = await fetchWaitlist();
+    return NextResponse.json({
+      count: rows.length,
+      pending_provider_sync: rows.filter((r) => !r.provider_synced).length,
+      contacts: rows,
+    });
+  } catch (err) {
+    console.error("admin waitlist error:", err);
+    return NextResponse.json({ error: "Failed to load waitlist" }, { status: 500 });
   }
-
-  const contacts = (data?.data ?? []).map((c) => ({
-    email: c.email,
-    created_at: c.created_at,
-    unsubscribed: c.unsubscribed,
-  }));
-
-  return NextResponse.json(contacts);
 }

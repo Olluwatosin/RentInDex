@@ -1,0 +1,55 @@
+# Weekly refresh of the asking-price half of the index.
+#
+# Not a Vercel cron: the scrapers throttle every request by design (2.5–4s) and
+# a full pass runs for many minutes, which no serverless function timeout will
+# accommodate. Actions has no such limit and runs the existing scripts unchanged.
+#
+# Requires two repository secrets:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+name: Scrape listings
+
+on:
+  schedule:
+    # 03:20 UTC each Monday — off the hour to avoid the runner rush.
+    - cron: "20 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Parse without writing to the database"
+        type: boolean
+        default: false
+
+concurrency:
+  group: scrape-listings
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      DRY: ${{ inputs.dry_run && '--dry-run' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check credentials are present
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::error::Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY repository secrets."
+            exit 1
+          fi
+
+      - name: Scrape Jiji
+        run: node scripts/scrapers/jiji.mjs $DRY
+
+      # Runs even if Jiji failed — one source being down should not cost us the
+      # other, and each records its own row in scrape_runs either way.
+      - name: Scrape NigeriaPropertyCentre
+        if: always()
+        run: node scripts/scrapers/npc.mjs $DRY
