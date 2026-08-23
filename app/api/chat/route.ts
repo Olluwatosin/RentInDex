@@ -52,6 +52,24 @@ const naira = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
 // show ugly values like ₦1,250,001.
 const nairaClean = (n: number) => naira(Math.round(n / 10000) * 10000);
 
+// How specific is this band, in words the reader can act on? A city-level band
+// covers a whole town, not a neighbourhood, and must never be described as if
+// it were the user's area.
+function placeOf(level: string, d: RentLookup): string {
+  if (level === "area" && d.area) return `in ${d.area}`;
+  if (level === "city" && d.area) return `across ${d.area} as a whole`;
+  if (level === "city") return `across the city`;
+  return `across ${d.state}`;
+}
+
+// The honest qualifier appended when a band is broader than the area asked about.
+function scopeNote(level: string, d: RentLookup): string {
+  if (level === "area" || !d.area) return "";
+  return level === "city"
+    ? ` (town-wide — not ${d.area}-specific)`
+    : ` (state-wide — not ${d.area}-specific yet)`;
+}
+
 function bandRange(b: { p25: number; p75: number; p50: number }) {
   // Bucketed data can collapse to a single value — show it cleanly, not "₦X–₦X".
   if (b.p25 === b.p75) return `around ${nairaClean(b.p50)}`;
@@ -106,12 +124,7 @@ function composeVerdictReply(d: RentLookup): string | null {
     // Name the contrast band's geography whenever it differs from the band the
     // verdict rests on — unlabelled, the two figures read as directly
     // comparable when they describe different places.
-    const where =
-      other.level === ref.level
-        ? ""
-        : other.level === "area" && d.area
-        ? ` in ${d.area}`
-        : ` across ${d.state}`;
+    const where = other.level === ref.level ? "" : ` ${placeOf(other.level, d)}`;
     parts.push(
       d.verdict_basis === "actual"
         ? `For context, agents advertise similar places${where} around ${bandRange(other)}.`
@@ -120,9 +133,15 @@ function composeVerdictReply(d: RentLookup): string | null {
   }
 
   // Honest caveat when the reference isn't area-specific or confidence is soft.
-  if (ref.level === "state" || d.confidence !== "high") {
+  if (ref.level !== "area" || d.confidence !== "high") {
+    // Phrased to put the place after the noun — "a ${area}-wide estimate" trips
+    // over a/an and reads badly for names like Iworoko or FCT Abuja.
+    const breadth =
+      ref.level === "city"
+        ? `a town-wide estimate for ${d.area ?? "your town"}`
+        : `a state-wide estimate for ${d.state}`;
     parts.push(
-      `⚠️ Heads up: we're still building data for ${d.area ?? "your area"} specifically, so treat this as a ${d.state}-wide estimate for now.`
+      `⚠️ Heads up: we're still building data for ${d.area ?? "your area"} specifically, so treat this as ${breadth} for now.`
     );
   }
 
@@ -163,9 +182,18 @@ function composeAverageReply(
       parts.push(`I do have data for other areas in ${d.state} — like ${alts.join(", ")}. Want the average for any of those?`);
     }
     if (d.actual || d.asking) {
+      // Name the fallback band's real breadth. A city-level band is a town
+      // average, not a state one, and calling it "state-wide" is just a
+      // different flavour of the same wrong label.
       const b = d.actual ?? d.asking!;
-      const lbl = d.actual ? "renters across the state pay" : "listings across the state are advertised at";
-      parts.push(`As a rough ${d.state}-wide guide, ${lbl} ${bandRange(b)} a year — but that's not ${askedArea}-specific.`);
+      const townWide = b.level === "city";
+      const guide = townWide ? `a rough ${askedArea}-wide guide` : `a rough ${d.state}-wide guide`;
+      const who = d.actual ? "renters" : "listings";
+      const verb = d.actual ? "pay" : "are advertised at";
+      const where = townWide ? "across the whole town" : `across ${d.state}`;
+      parts.push(
+        `As ${guide}, ${who} ${where} ${verb} ${bandRange(b)} a year — but that's not ${askedArea}-specific.`
+      );
     }
     parts.push(
       `👉 You can help fix this: if you rent around ${askedArea}, tell me your apartment type and yearly rent and I'll add it, so the next person gets a real answer. What do you pay?`
@@ -177,8 +205,7 @@ function composeAverageReply(
   // geography (never present state-wide numbers as if they were area-specific).
   const band = d.actual ?? d.asking;
   if (!band) return null;
-  const scope = (lvl: string) =>
-    lvl === "area" && d.area ? `in ${d.area}` : `across ${d.state}${d.area ? " (state-wide — not " + d.area + "-specific yet)" : ""}`;
+  const scope = (lvl: string) => `${placeOf(lvl, d)}${scopeNote(lvl, d)}`;
   const parts: string[] = [`💰 Here's what I have for a ${type}:`];
   if (d.actual) parts.push(`Renters ${scope(d.actual.level)} told us they typically pay ${bandRange(d.actual)} a year.`);
   if (d.asking) parts.push(`Agents advertise them ${scope(d.asking.level)} around ${bandRange(d.asking)}.`);
@@ -194,11 +221,14 @@ function composeAverageReply(
       }
     } else {
       const areaLabel = d.area ?? "that area";
-      const areaIsRenters = d.actual.level === "area";
-      const narrow = areaIsRenters ? "renter" : "listing";
-      const wide = areaIsRenters ? "listing" : "renter";
+      const rank = (lvl: string) => (lvl === "area" ? 0 : lvl === "city" ? 1 : 2);
+      const rentersNarrower = rank(d.actual.level) < rank(d.asking.level);
+      const narrow = rentersNarrower ? "renter" : "listing";
+      const wide = rentersNarrower ? "listing" : "renter";
+      const wideLevel = rentersNarrower ? d.asking.level : d.actual.level;
+      const breadth = wideLevel === "city" ? `${areaLabel}-wide` : `${d.state}-wide`;
       parts.push(
-        `⚠️ Don't read a markup into those two — the ${narrow} figure is ${areaLabel}-specific while the ${wide} figure is ${d.state}-wide, so most of that gap is geography, not landlords. I need more ${wide} data for ${areaLabel} before I can tell you the real difference.`
+        `⚠️ Don't read a markup into those two — the ${narrow} figure is ${areaLabel}-specific while the ${wide} figure is ${breadth}, so most of that gap is geography, not landlords. I need more ${wide} data for ${areaLabel} before I can tell you the real difference.`
       );
     }
   }

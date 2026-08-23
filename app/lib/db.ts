@@ -56,7 +56,9 @@ export async function insertRenterRow(row: RenterRow): Promise<void> {
 }
 
 export interface RentBand {
-  level: "area" | "state";
+  // "city" sits between: the row matched on its city column rather than its
+  // area column, so it describes a whole town, not a neighbourhood.
+  level: "area" | "city" | "state";
   p25: number;
   p50: number;
   p75: number;
