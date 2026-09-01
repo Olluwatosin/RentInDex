@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callLLM } from "@/app/lib/llm";
+import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
 import { rateLimit } from "@/app/lib/rate-limit";
 import { dbConfigured, rentLookup, RentLookup, areasInState, stateForArea } from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
 import { parseAmounts, userTurnsOnly, amountCorroborated } from "@/app/lib/amounts";
+import { fillMissingFields, areaCandidates } from "@/app/lib/extract";
 
 const SYSTEM_PROMPT = `You are RentBot — the AI assistant for RentInDex, Nigeria's first rent intelligence platform.
 
@@ -70,6 +71,25 @@ function scopeNote(level: string, d: RentLookup): string {
     : ` (state-wide — not ${d.area}-specific yet)`;
 }
 
+// Above this multiple, an asking-vs-paid gap stops being a story about
+// landlords and starts being a story about our own sample.
+//
+// The scraped listings skew hard to the premium end — the Lagos 2-bed sample is
+// dominated by Lekki Phase 1, Ikate and Victoria Island, so state-level asking
+// medians land around ₦7.5m against ₦800k actually paid. Reporting that as a
+// 9x markup is not leverage, it is a number no Nigerian renter will believe,
+// and it costs us the reader. Until sampling is stratified by area and price
+// band, say plainly that the two samples aren't comparable.
+const IMPLAUSIBLE_MARKUP = 2.5;
+
+function markupIsCredible(
+  asking: { p50: number } | null,
+  actual: { p50: number } | null
+): boolean {
+  if (!asking || !actual || actual.p50 <= 0) return false;
+  return asking.p50 / actual.p50 <= IMPLAUSIBLE_MARKUP;
+}
+
 function bandRange(b: { p25: number; p75: number; p50: number }) {
   // Bucketed data can collapse to a single value — show it cleanly, not "₦X–₦X".
   if (b.p25 === b.p75) return `around ${nairaClean(b.p50)}`;
@@ -106,6 +126,13 @@ function composeVerdictReply(d: RentLookup): string | null {
         ? `👍 Looks fair. Your ${rent}/year is right around what renters pay for a ${type} in ${place}.`
         : `⚠️ On the high side. Your ${rent}/year is *above* what renters told us they pay for a ${type} in ${place} — you may have room to negotiate.`;
     headline += ` Most pay ${bandRange(ref)}.`;
+  } else if (d.actual && !markupIsCredible(d.asking, d.actual)) {
+    // The verdict rests on asking prices, but our renter data for the same
+    // place says something very different — which means the listing sample is
+    // premium-skewed, not that this renter found a bargain. Telling someone
+    // "✅ good deal!" off a Lekki-weighted sample is how we lose them for good.
+    headline =
+      `🤔 I don't want to guess on this one. Your ${rent}/year is below the asking prices I have for a ${type} in ${place} (${bandRange(ref)}) — but those listings lean heavily to serviced flats and estates, so being under them doesn't mean you're getting a deal.`;
   } else {
     headline =
       d.verdict === "below"
@@ -217,7 +244,11 @@ function composeAverageReply(
   if (d.actual && d.asking) {
     if (d.actual.level === d.asking.level) {
       if (d.asking.p50 > d.actual.p50) {
-        parts.push(`Asking prices here run higher than what people actually pay — useful leverage when you negotiate.`);
+        parts.push(
+          markupIsCredible(d.asking, d.actual)
+            ? `Asking prices here run higher than what people actually pay — useful leverage when you negotiate.`
+            : `⚠️ Those two are far apart because the listings we scrape skew to the premium end of the market (serviced flats, estates), not because landlords mark up that much. Trust the renter figure — the listing figure is the top of the market, not the middle.`
+        );
       }
     } else {
       const areaLabel = d.area ?? "that area";
@@ -340,27 +371,45 @@ export async function POST(req: NextRequest) {
       asksAverage(lastUserMessage) || mentionsRent(lastUserMessage) || Boolean(detectState(conversationText));
 
     if (rentIntent && dbConfigured()) {
-      const fields = await extractLookupFields(conversationText);
-      const askedArea = fields?.area ?? null;
-      // The transcript we hand the extractor contains our own quoted medians, so
-      // the model can hand back one of them as "the user's rent" and we'd issue a
-      // verdict on a figure nobody gave us. Only honour a rent the user typed.
-      const statedAmounts = parseAmounts(userTurnsOnly(conversationText));
-      const userRent =
-        typeof fields?.annual_rent === "number" &&
-        fields.annual_rent > 0 &&
-        amountCorroborated(fields.annual_rent, statedAmounts)
-          ? fields.annual_rent
-          : null;
+      // The model is only one source of these fields, and an unreliable one —
+      // it returns null for everything when the provider is down. Whatever it
+      // misses is filled deterministically below, so the answer engine keeps
+      // working through an LLM outage.
+      const modelFields = await extractLookupFields(conversationText);
+
       // State may be named directly, or inferred from the area (e.g. "Gwarinpa" → Abuja).
       let state = detectState(conversationText);
-      if (!state && askedArea) state = await stateForArea(askedArea);
+      if (!state && modelFields?.area) state = await stateForArea(modelFields.area);
+      // No state and no model (it's down): resolve the state from the place the
+      // user named. Capped at three lookups — a miss costs nothing but a query.
+      if (!state) {
+        for (const candidate of areaCandidates(conversationText).slice(0, 3)) {
+          state = await stateForArea(candidate);
+          if (state) break;
+        }
+      }
 
       if (state) {
+        // Only pay for the area list when we actually need it to fill a gap.
+        const knownAreas = modelFields?.area ? [] : await areasInState(state);
+        const fields = fillMissingFields(modelFields, conversationText, knownAreas);
+        const askedArea = fields.area;
+
+        // The transcript we hand the extractor contains our own quoted medians, so
+        // the model can hand back one of them as "the user's rent" and we'd issue a
+        // verdict on a figure nobody gave us. Only honour a rent the user typed.
+        const statedAmounts = parseAmounts(userTurnsOnly(conversationText));
+        const userRent =
+          typeof fields.annual_rent === "number" &&
+          fields.annual_rent > 0 &&
+          amountCorroborated(fields.annual_rent, statedAmounts)
+            ? fields.annual_rent
+            : null;
+
         const lookup = await rentLookup({
           state,
           area: askedArea,
-          propertyType: fields?.property_type ?? null,
+          propertyType: fields.property_type,
           annualRent: userRent,
         });
         if (lookup) {
@@ -394,7 +443,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const reply = await callLLM(trimmed, systemPrompt, 200);
+    // Everything above this line — the fairness verdict and the average reply —
+    // is composed deterministically from the database and needs no model at all.
+    // Only the conversational gathering turns reach the LLM, so a provider
+    // outage costs us the chat, never the answers.
+    let reply: string;
+    try {
+      reply = await callLLM(trimmed, systemPrompt, 200);
+    } catch (err) {
+      if (err instanceof LLMUnavailableError) {
+        console.error("Chat: all LLM providers unavailable:", err.message);
+        return NextResponse.json({
+          reply:
+            "I can't reach my assistant right now 😅 — but I can still check rent for you. Tell me the state, the apartment type and what you pay a year, and I'll give you the numbers.",
+          suggestions: ["Is my rent fair?", "Calculate my move-in cost"],
+        });
+      }
+      throw err;
+    }
 
     const suggestions = getSuggestions(lastUserMessage, reply);
     return NextResponse.json({ reply, suggestions });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { callLLM } from "@/app/lib/llm";
+import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
 import { dbConfigured, insertRenterRow } from "@/app/lib/db";
 import { sendEmail } from "@/app/lib/email";
@@ -84,15 +84,29 @@ Rules:
 Conversation:
 ${conversation}`;
 
-    const raw = await callLLM(
-      [{ role: "user", content: extractionPrompt }],
-      EXTRACTION_SYSTEM_PROMPT,
-      300
-    );
+    // A provider outage must report itself as an outage. It used to arrive here
+    // as callLLM's "I'm having trouble connecting" sentence, which parsed as
+    // nothing and was filed under `parse_error` — so RentBot silently collected
+    // zero rows for weeks while the reason looked like a JSON quirk.
+    let raw: string;
+    try {
+      raw = await callLLM(
+        [{ role: "user", content: extractionPrompt }],
+        EXTRACTION_SYSTEM_PROMPT,
+        300
+      );
+    } catch (err) {
+      if (err instanceof LLMUnavailableError) {
+        console.error("Extraction: all LLM providers unavailable:", err.message);
+        return NextResponse.json({ saved: false, reason: "llm_unavailable" });
+      }
+      throw err;
+    }
 
     const data = parseExtracted(raw);
 
     if (!data) {
+      console.warn("Extraction: model output did not parse:", raw.slice(0, 200));
       return NextResponse.json({ saved: false, reason: "parse_error" });
     }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbConfigured, fetchWaitlist } from "@/app/lib/db";
+import { isAuthorisedAdmin } from "@/app/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -7,8 +8,7 @@ export const dynamic = "force-dynamic";
 // first now, so this shows the real list even when Brevo/Resend are unconfigured
 // — which is exactly the situation that previously made this endpoint useless.
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
+  if (!isAuthorisedAdmin(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   if (!dbConfigured()) {

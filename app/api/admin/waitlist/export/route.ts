@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dbConfigured, fetchWaitlist } from "@/app/lib/db";
+import { isAuthorisedAdmin } from "@/app/lib/admin-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,7 @@ const csvCell = (v: unknown) => {
 };
 
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get("secret");
-  if (!process.env.ADMIN_SECRET || secret !== process.env.ADMIN_SECRET) {
+  if (!isAuthorisedAdmin(req)) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
   if (!dbConfigured()) {
