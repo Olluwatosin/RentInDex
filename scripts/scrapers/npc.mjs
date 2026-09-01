@@ -82,6 +82,16 @@ function stateName(slug) {
   return STATE_NAMES[slug] ?? titleCase(slug);
 }
 
+// Sub-area slugs that name nothing on their own. "GRA" is not a place — Ikeja
+// GRA, Magodo GRA and Ogudu GRA are three very different markets, and taking
+// the bare slug merged them into one invented neighbourhood whose median then
+// leaked into every lookup for their parent. Qualify these with the parent.
+const GENERIC_SUBAREAS = new Set([
+  "gra", "extension", "estate", "central", "north", "south", "east", "west",
+  "new-site", "old-site", "main", "town", "phase-1", "phase-2", "phase-3",
+  "phase-4", "phase-5", "zone-1", "zone-2", "zone-3", "zone-4", "zone-5",
+]);
+
 function parseLocationFromUrl(url) {
   // /for-rent/<type...>/<state>/<area>/<sub-area>/<id>-<slug>
   const segs = new URL(url).pathname.split("/").filter(Boolean);
@@ -89,11 +99,18 @@ function parseLocationFromUrl(url) {
   if (stateIdx === -1) return null;
   const tail = segs.slice(stateIdx + 1, -1); // between state and id-slug
   const area = tail[0] ? titleCase(tail[0]) : null;
-  const subArea = tail[1] ? titleCase(tail[1]) : null;
+
+  let areaRaw = area;
+  if (tail[1]) {
+    areaRaw = GENERIC_SUBAREAS.has(tail[1])
+      ? `${titleCase(tail[0])} ${titleCase(tail[1]).toUpperCase() === "GRA" ? "GRA" : titleCase(tail[1])}`
+      : titleCase(tail[1]);
+  }
+
   return {
     state: stateName(segs[stateIdx]),
     city: area,
-    area_raw: subArea ?? area,
+    area_raw: areaRaw,
   };
 }
 
@@ -238,7 +255,11 @@ async function main() {
   // Breadth beats depth for a representative sample: one page from each of a
   // state's neighbourhoods tells us far more about the market than ten more
   // pages of the same premium corridor.
-  const areaPages = args["area-pages"] ? parseInt(String(args["area-pages"]), 10) : 1;
+  // Two pages per area, not one: a single page leaves most neighbourhoods with
+  // a handful of listings, and a median over four flats swings wildly with the
+  // next one scraped. Depth here is what makes a per-area figure stable enough
+  // to publish.
+  const areaPages = args["area-pages"] ? parseInt(String(args["area-pages"]), 10) : 2;
   const maxAreas = args["max-areas"] ? parseInt(String(args["max-areas"]), 10) : 60;
   const skipAreas = Boolean(args["no-areas"]);
 
