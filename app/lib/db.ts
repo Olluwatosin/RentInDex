@@ -59,6 +59,10 @@ export interface RentBand {
   // "city" sits between: the row matched on its city column rather than its
   // area column, so it describes a whole town, not a neighbourhood.
   level: "area" | "city" | "state";
+  // True when the typed sample was too thin and the engine widened to every
+  // property type. Such a band mixes self-cons with duplexes, so it must never
+  // be presented as a price for the type the user actually asked about.
+  any_type: boolean;
   p25: number;
   p50: number;
   p75: number;

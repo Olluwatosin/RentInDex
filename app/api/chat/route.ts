@@ -71,6 +71,17 @@ function scopeNote(level: string, d: RentLookup): string {
     : ` (state-wide — not ${d.area}-specific yet)`;
 }
 
+// A band can also be broader than the *property type* asked about: when too few
+// listings of that type exist, the engine widens to every type, mixing
+// self-cons with duplexes. Ikeja had four two-bedroom listings, so its band was
+// really all twenty Ikeja flats — quoted as a ₦25m two-bedroom median.
+function typeNote(b: { any_type: boolean }, d: RentLookup): string {
+  if (!b.any_type) return "";
+  return d.property_type
+    ? ` (all property types — I don't have enough ${d.property_type} listings there yet)`
+    : ` (all property types)`;
+}
+
 // Above this multiple, an asking-vs-paid gap stops being a story about
 // landlords and starts being a story about our own sample.
 //
@@ -126,13 +137,24 @@ function composeVerdictReply(d: RentLookup): string | null {
         ? `👍 Looks fair. Your ${rent}/year is right around what renters pay for a ${type} in ${place}.`
         : `⚠️ On the high side. Your ${rent}/year is *above* what renters told us they pay for a ${type} in ${place} — you may have room to negotiate.`;
     headline += ` Most pay ${bandRange(ref)}.`;
-  } else if (d.actual && !markupIsCredible(d.asking, d.actual)) {
-    // The verdict rests on asking prices, but our renter data for the same
-    // place says something very different — which means the listing sample is
-    // premium-skewed, not that this renter found a bargain. Telling someone
-    // "✅ good deal!" off a Lekki-weighted sample is how we lose them for good.
+  } else if (
+    (d.actual && !markupIsCredible(d.asking, d.actual)) ||
+    (ref.any_type && Boolean(d.property_type))
+  ) {
+    // Two ways an asking-based verdict can mislead, both worth refusing:
+    //   - our renter data for the same place disagrees wildly, which means the
+    //     listing sample is premium-skewed, not that this renter found a bargain
+    //   - the band lost the property-type filter, so it prices duplexes
+    //     alongside self-cons and says nothing about the user's flat
+    // Telling someone "✅ good deal!" off either is how we lose them for good.
+    const reason =
+      ref.any_type && d.property_type
+        ? `that band covers every property type in ${place}, not ${d.property_type}s specifically`
+        : `those listings lean heavily to serviced flats and estates`;
+    const sits =
+      d.verdict === "below" ? "below" : d.verdict === "above" ? "above" : "around";
     headline =
-      `🤔 I don't want to guess on this one. Your ${rent}/year is below the asking prices I have for a ${type} in ${place} (${bandRange(ref)}) — but those listings lean heavily to serviced flats and estates, so being under them doesn't mean you're getting a deal.`;
+      `🤔 I don't want to guess on this one. Your ${rent}/year sits ${sits} the asking prices I have for ${place} (${bandRange(ref)}) — but ${reason}, so that comparison doesn't tell you much.`;
   } else {
     headline =
       d.verdict === "below"
@@ -152,10 +174,11 @@ function composeVerdictReply(d: RentLookup): string | null {
     // verdict rests on — unlabelled, the two figures read as directly
     // comparable when they describe different places.
     const where = other.level === ref.level ? "" : ` ${placeOf(other.level, d)}`;
+    const breadth = typeNote(other, d);
     parts.push(
       d.verdict_basis === "actual"
-        ? `For context, agents advertise similar places${where} around ${bandRange(other)}.`
-        : `Renters we've heard from${where} pay around ${bandRange(other)}.`
+        ? `For context, agents advertise similar places${where}${breadth} around ${bandRange(other)}.`
+        : `Renters we've heard from${where}${breadth} pay around ${bandRange(other)}.`
     );
   }
 
@@ -232,10 +255,11 @@ function composeAverageReply(
   // geography (never present state-wide numbers as if they were area-specific).
   const band = d.actual ?? d.asking;
   if (!band) return null;
-  const scope = (lvl: string) => `${placeOf(lvl, d)}${scopeNote(lvl, d)}`;
+  const scope = (b: { level: string; any_type: boolean }) =>
+    `${placeOf(b.level, d)}${scopeNote(b.level, d)}${typeNote(b, d)}`;
   const parts: string[] = [`💰 Here's what I have for a ${type}:`];
-  if (d.actual) parts.push(`Renters ${scope(d.actual.level)} told us they typically pay ${bandRange(d.actual)} a year.`);
-  if (d.asking) parts.push(`Agents advertise them ${scope(d.asking.level)} around ${bandRange(d.asking)}.`);
+  if (d.actual) parts.push(`Renters ${scope(d.actual)} told us they typically pay ${bandRange(d.actual)} a year.`);
+  if (d.asking) parts.push(`Agents advertise them ${scope(d.asking)} around ${bandRange(d.asking)}.`);
 
   // "Asking runs higher than paid" is only an honest read when both bands
   // describe the SAME place. Setting an area's listings against a state-wide
