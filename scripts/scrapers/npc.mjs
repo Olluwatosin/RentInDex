@@ -174,6 +174,24 @@ function parsePage(html) {
   return listings;
 }
 
+// Neighbourhood pages linked from a state's listing page.
+//
+// This is the whole point of the area pass. Scraping only the state feed takes
+// whatever that feed's default order surfaces, and on this site that is the
+// promoted premium stock — which is how the Lagos sample ended up as 16 Lekki
+// Phase 1 flats, 14 Ikate and a handful of Banana Island, with Agege, Ejigbo,
+// Ikorodu and Alimosho absent entirely, and a reported ₦20m median for an Ikeja
+// two-bedroom. Walking the area links instead samples the state by geography.
+function parseAreaSlugs(html, stateSlug) {
+  const re = new RegExp(
+    `/for-rent/flats-apartments/${stateSlug}/([a-z0-9-]+)(?:/|"|\\?)`,
+    "g"
+  );
+  const slugs = new Set();
+  for (const m of html.matchAll(re)) slugs.add(m[1]);
+  return [...slugs].sort();
+}
+
 // ── storage ───────────────────────────────────────────────────────────────────
 
 async function insertListings(rows) {
@@ -217,50 +235,111 @@ async function main() {
     process.exit(1);
   }
 
+  // Breadth beats depth for a representative sample: one page from each of a
+  // state's neighbourhoods tells us far more about the market than ten more
+  // pages of the same premium corridor.
+  const areaPages = args["area-pages"] ? parseInt(String(args["area-pages"]), 10) : 1;
+  const maxAreas = args["max-areas"] ? parseInt(String(args["max-areas"]), 10) : 60;
+  const skipAreas = Boolean(args["no-areas"]);
+
   let totalParsed = 0;
   let totalInserted = 0;
+  const perArea = new Map(); // "State — Area" -> count, for the coverage report
 
-  for (const state of states) {
-    const pages = fixedPages ?? PRIORITY_PAGES[state] ?? 2;
-    for (let page = 1; page <= pages; page++) {
-      const url = `${BASE}/for-rent/flats-apartments/${state}${page > 1 ? `?page=${page}` : ""}`;
-      let html;
-      try {
-        const res = await fetch(url, { headers: { "User-Agent": UA } });
-        if (!res.ok) {
-          console.error(`  ✗ ${state} p${page}: HTTP ${res.status} — stopping this state`);
-          break;
-        }
-        html = await res.text();
-      } catch (err) {
-        console.error(`  ✗ ${state} p${page}: ${err.message} — stopping this state`);
-        break;
+  async function fetchHtml(url, label) {
+    try {
+      const res = await fetch(url, { headers: { "User-Agent": UA } });
+      if (!res.ok) {
+        console.error(`  ✗ ${label}: HTTP ${res.status}`);
+        return null;
       }
+      return await res.text();
+    } catch (err) {
+      console.error(`  ✗ ${label}: ${err.message}`);
+      return null;
+    }
+  }
+
+  // Scrape one listing feed (a state feed or an area feed) page by page.
+  // Returns false when the feed ran dry, so the caller can stop early.
+  async function harvest(baseUrl, label, pages) {
+    for (let page = 1; page <= pages; page++) {
+      const url = `${baseUrl}${page > 1 ? `?page=${page}` : ""}`;
+      const html = await fetchHtml(url, `${label} p${page}`);
+      if (!html) return false;
 
       const listings = parsePage(html);
       totalParsed += listings.length;
 
       if (listings.length === 0) {
-        console.log(`  · ${state} p${page}: no listings — end of results`);
-        break;
+        console.log(`  · ${label} p${page}: no listings — end of results`);
+        return false;
+      }
+
+      for (const l of listings) {
+        if (l.is_outlier) continue;
+        const key = `${l.state} — ${l.area_raw ?? "?"}`;
+        if (!perArea.has(key)) perArea.set(key, []);
+        perArea.get(key).push(l.annual_rent);
       }
 
       if (dryRun) {
-        console.log(`  ✓ ${state} p${page}: parsed ${listings.length} (dry run)`);
-        if (page === 1) console.log(JSON.stringify(listings[0], null, 2));
+        console.log(`  ✓ ${label} p${page}: parsed ${listings.length} (dry run)`);
       } else {
         const n = await insertListings(listings);
         totalInserted += n;
-        console.log(`  ✓ ${state} p${page}: ${n} listings`);
+        console.log(`  ✓ ${label} p${page}: ${n} listings`);
       }
 
       await throttle();
     }
+    return true;
+  }
+
+  for (const state of states) {
+    // The state feed is the biased source — it is the one ordered by the site's
+    // promotion, not by geography. Once the area pass is doing the sampling,
+    // going deep here only re-buys more of the same premium corridor, so take
+    // two pages for stragglers and spend the request budget on areas instead.
+    // PRIORITY_PAGES still applies when areas are switched off.
+    const statePages = fixedPages ?? (skipAreas ? PRIORITY_PAGES[state] ?? 2 : 2);
+    const stateUrl = `${BASE}/for-rent/flats-apartments/${state}`;
+
+    // Page 1 does double duty: its listings, and the area links we walk next.
+    const firstHtml = await fetchHtml(stateUrl, `${state} p1`);
+    if (!firstHtml) continue;
+
+    const areaSlugs = skipAreas ? [] : parseAreaSlugs(firstHtml, state).slice(0, maxAreas);
+    console.log(`\n${state}: ${areaSlugs.length} areas linked, ${statePages} state pages`);
+
+    await harvest(stateUrl, state, statePages);
+    for (const slug of areaSlugs) {
+      await harvest(`${stateUrl}/${slug}`, `${state}/${slug}`, areaPages);
+    }
+  }
+
+  // Coverage report — the number to watch is how evenly listings spread across
+  // areas, not the total. A big total concentrated in five premium estates is
+  // exactly the sample that produced our worst published figures.
+  const median = (xs) => {
+    const s = [...xs].sort((a, b) => a - b);
+    const m = Math.floor(s.length / 2);
+    return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+  };
+  const naira = (n) => "₦" + n.toLocaleString("en-NG");
+
+  const spread = [...perArea.entries()].sort((a, b) => b[1].length - a[1].length);
+  const allPrices = spread.flatMap(([, xs]) => xs);
+  console.log(`\nCoverage: ${spread.length} distinct areas, ${allPrices.length} priced listings.`);
+  if (allPrices.length) console.log(`Overall median: ${naira(median(allPrices))}`);
+  console.log("Most-sampled areas:");
+  for (const [area, xs] of spread.slice(0, 15)) {
+    console.log(`  ${String(xs.length).padStart(4)}  ${naira(median(xs)).padStart(14)}  ${area}`);
   }
 
   console.log(`\nDone. Parsed ${totalParsed}${dryRun ? " (dry run, nothing inserted)" : `, sent ${totalInserted} (duplicates ignored by db)`}.`);
 
-  return { parsed: totalParsed, sent: totalInserted };
+  return { parsed: totalParsed, sent: totalInserted, areas: spread.length };
 }
 
 // Record the run so a scheduled failure is visible instead of silent.
