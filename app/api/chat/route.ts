@@ -318,7 +318,9 @@ ${conversation}`;
     const raw = await callLLM(
       [{ role: "user", content: prompt }],
       "You extract structured data. Return only valid JSON, no markdown.",
-      150
+      // Headroom for a reasoning model's thinking tokens — see extract-data.
+      800,
+      { json: true, temperature: 0 }
     );
     const m = raw.replace(/```json\s*/gi, "").replace(/```/g, "").match(/\{[\s\S]*\}/);
     if (!m) return null;

@@ -36,10 +36,18 @@ function isModelUnavailable(err: unknown): boolean {
   );
 }
 
+export interface LLMOptions {
+  /** Ask the provider to guarantee valid JSON, and stop sampling drifting. */
+  json?: boolean;
+  /** Override sampling temperature (extraction wants 0, chat wants warmth). */
+  temperature?: number;
+}
+
 async function callGroq(
   messages: { role: string; content: string }[],
   systemPrompt: string,
-  maxTokens: number
+  maxTokens: number,
+  opts: LLMOptions
 ): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY is not set");
@@ -53,16 +61,34 @@ async function callGroq(
   let lastErr: unknown = new Error("No Groq models configured");
 
   for (const model of order) {
+    const body = {
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages,
+      ] as Parameters<typeof groq.chat.completions.create>[0]["messages"],
+      max_tokens: maxTokens,
+      temperature: opts.temperature ?? 0.7,
+      // Guarantees parseable output. Some models reject the parameter, so a
+      // rejection retries once without it rather than failing the request.
+      ...(opts.json ? { response_format: { type: "json_object" as const } } : {}),
+    };
+
     try {
-      const response = await groq.chat.completions.create({
-        model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ] as Parameters<typeof groq.chat.completions.create>[0]["messages"],
-        max_tokens: maxTokens,
-        temperature: 0.7,
-      });
+      let response;
+      try {
+        response = await groq.chat.completions.create(body);
+      } catch (err) {
+        if (opts.json && /response_format|json_object/i.test(String(err))) {
+          console.warn(`LLM: "${model}" rejected JSON mode — retrying without it.`);
+          const { response_format: _drop, ...plain } = body;
+          void _drop;
+          response = await groq.chat.completions.create(plain);
+        } else {
+          throw err;
+        }
+      }
+
       const content = response.choices[0]?.message?.content;
       if (!content) throw new Error(`Empty response from Groq (${model})`);
 
@@ -88,7 +114,8 @@ async function callGroq(
 async function callOpenRouter(
   messages: { role: string; content: string }[],
   systemPrompt: string,
-  maxTokens: number
+  maxTokens: number,
+  opts: LLMOptions
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not set");
@@ -105,7 +132,8 @@ async function callOpenRouter(
       model: process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.1-8b-instruct",
       messages: [{ role: "system", content: systemPrompt }, ...messages],
       max_tokens: maxTokens,
-      temperature: 0.7,
+      temperature: opts.temperature ?? 0.7,
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
 
@@ -142,14 +170,15 @@ async function callOpenRouter(
 export async function callLLM(
   messages: { role: string; content: string }[],
   systemPrompt: string,
-  maxTokens: number = 500
+  maxTokens: number = 500,
+  opts: LLMOptions = {}
 ): Promise<string> {
   try {
-    return await callGroq(messages, systemPrompt, maxTokens);
+    return await callGroq(messages, systemPrompt, maxTokens, opts);
   } catch (groqErr) {
     console.error("LLM: Groq failed, trying OpenRouter:", groqErr);
     try {
-      return await callOpenRouter(messages, systemPrompt, maxTokens);
+      return await callOpenRouter(messages, systemPrompt, maxTokens, opts);
     } catch (orErr) {
       console.error("LLM: OpenRouter also failed:", orErr);
       throw new LLMUnavailableError(

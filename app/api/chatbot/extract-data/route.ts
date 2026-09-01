@@ -93,7 +93,12 @@ ${conversation}`;
       raw = await callLLM(
         [{ role: "user", content: extractionPrompt }],
         EXTRACTION_SYSTEM_PROMPT,
-        300
+        // Generous budget on purpose: the model serving us may be a reasoning
+        // model (gpt-oss), which spends tokens thinking before it emits a
+        // single character of JSON. At 300 the object was being cut off
+        // mid-field and reported as a parse error.
+        1200,
+        { json: true, temperature: 0 }
       );
     } catch (err) {
       if (err instanceof LLMUnavailableError) {
