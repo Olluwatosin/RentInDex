@@ -243,6 +243,22 @@ export async function getChatSession(sessionId: string): Promise<ChatSessionStat
   return appendChatMessages(sessionId, [], 0);
 }
 
+/** Drop transcripts untouched for a day. Returns how many went. */
+export async function cleanupChatSessions(): Promise<number> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cleanup_chat_sessions`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: "{}",
+  });
+  if (!res.ok) {
+    console.error(`cleanup_chat_sessions failed (${res.status}): ${await res.text()}`);
+    return 0;
+  }
+  const n = await res.json();
+  return typeof n === "number" ? n : 0;
+}
+
 /** True when the caller may proceed. Fails open — see rate-limit.ts. */
 export async function rateLimitHit(
   bucket: string,
