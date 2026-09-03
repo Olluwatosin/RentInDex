@@ -179,6 +179,93 @@ export async function getResponseCount(): Promise<number> {
   return count;
 }
 
+// ─── chat sessions ───────────────────────────────────────────────────────────
+//
+// The transcript lives on the server. Extraction reads it from here rather than
+// from the request body, so a renter row can only come from a conversation that
+// actually happened. See the migration for the full reasoning.
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatSessionState {
+  messages: ChatMessage[];
+  turns: number;
+}
+
+export async function createChatSession(): Promise<string | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/chat_sessions`, {
+    method: "POST",
+    headers: { ...headers(), Prefer: "return=representation" },
+    body: JSON.stringify({}),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    console.error(`createChatSession failed (${res.status}): ${await res.text()}`);
+    return null;
+  }
+  const rows = (await res.json()) as { id: string }[];
+  return rows[0]?.id ?? null;
+}
+
+/**
+ * Append messages to a session and return its updated state.
+ * Null means the session id is unknown or expired — callers must treat that as
+ * "no transcript", never as an empty one they can substitute for.
+ */
+export async function appendChatMessages(
+  sessionId: string,
+  messages: ChatMessage[],
+  turnIncrement = 0
+): Promise<ChatSessionState | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/chat_session_append`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({
+      p_id: sessionId,
+      p_new: messages,
+      p_turns: turnIncrement,
+    }),
+  });
+  if (!res.ok) {
+    console.error(`chat_session_append failed (${res.status}): ${await res.text()}`);
+    return null;
+  }
+  const state = await res.json();
+  return state && typeof state === "object" ? (state as ChatSessionState) : null;
+}
+
+export async function getChatSession(sessionId: string): Promise<ChatSessionState | null> {
+  // Appending nothing is the read: same RPC, same null-on-unknown-id contract.
+  return appendChatMessages(sessionId, [], 0);
+}
+
+/** True when the caller may proceed. Fails open — see rate-limit.ts. */
+export async function rateLimitHit(
+  bucket: string,
+  limit: number,
+  windowSeconds: number
+): Promise<boolean> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/rate_limit_hit`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({
+      p_bucket: bucket,
+      p_limit: limit,
+      p_window_seconds: windowSeconds,
+    }),
+  });
+  if (!res.ok) {
+    console.error(`rate_limit_hit failed (${res.status}): ${await res.text()}`);
+    return true;
+  }
+  return (await res.json()) === true;
+}
+
 export interface WaitlistInsert {
   inserted: boolean;
   alreadyPresent: boolean;

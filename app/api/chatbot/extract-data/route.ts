@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
-import { dbConfigured, insertRenterRow } from "@/app/lib/db";
+import { dbConfigured, insertRenterRow, getChatSession } from "@/app/lib/db";
 import { sendEmail } from "@/app/lib/email";
-import { rateLimit } from "@/app/lib/rate-limit";
+import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
 import { detectState } from "@/app/lib/nigeria";
 import {
   parseAmounts,
@@ -36,20 +36,38 @@ function parseExtracted(raw: string): ChatbotRentData | null {
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  if (!rateLimit(ip, 10, 60_000)) {
+  if (!(await rateLimit(ipBucket("extract", ip), 10, 60_000))) {
     return NextResponse.json({ saved: false, reason: "rate_limited" }, { status: 429 });
   }
 
   try {
     const body = await req.json();
-    const { conversation, conversationId } = body;
+    const sessionId: unknown = body?.sessionId;
 
-    if (!conversation || typeof conversation !== "string") {
+    if (typeof sessionId !== "string" || !/^[0-9a-f-]{36}$/i.test(sessionId)) {
       return NextResponse.json({ saved: false, reason: "invalid_input" }, { status: 400 });
     }
 
-    const convId: string | null =
-      typeof conversationId === "string" && conversationId.length <= 64 ? conversationId : null;
+    // The transcript comes from our own store, never from the request.
+    //
+    // This endpoint used to accept the conversation as a body field, and the
+    // corroboration guard below then checked the model's output against that
+    // same caller-supplied text — which makes it airtight against RentBot
+    // quoting itself and completely useless against someone writing their own
+    // "User: I pay ₦9,000,000" and running it in a loop. Reading the server's
+    // copy means a renter row can only come from a conversation that happened.
+    const session = await getChatSession(sessionId);
+    if (!session) {
+      return NextResponse.json({ saved: false, reason: "unknown_session" }, { status: 404 });
+    }
+
+    const conversation = session.messages
+      .map((m) => `${m.role === "user" ? "User" : "Bot"}: ${m.content}`)
+      .join("\n");
+
+    // One session is one row: the session id is ours, so it can't be used to
+    // target or overwrite another conversation's row.
+    const convId: string = sessionId;
 
     const extractionPrompt = `Extract rental data from this conversation. Return ONLY valid JSON, nothing else:
 {
@@ -121,6 +139,22 @@ ${conversation}`;
     const hasRealRent = typeof data.annual_rent === "number" && data.annual_rent > 0;
     if (!data.state || !hasRealRent) {
       return NextResponse.json({ saved: false, reason: "need_state_and_rent" });
+    }
+
+    // Plausibility bound. Requiring a real session raises the cost of poisoning
+    // the index enormously, but it doesn't make a single row true: a genuine
+    // conversation can still carry a typo or a deliberate ₦900,000,000. These
+    // bounds are wide enough to admit the cheapest room in the country and the
+    // most expensive flat in Ikoyi, and narrow enough to keep a stray figure
+    // out of a published median.
+    const MIN_PLAUSIBLE_RENT = 20_000;
+    const MAX_PLAUSIBLE_RENT = 200_000_000;
+    if (
+      data.annual_rent! < MIN_PLAUSIBLE_RENT ||
+      data.annual_rent! > MAX_PLAUSIBLE_RENT
+    ) {
+      console.warn(`Extraction: implausible rent rejected (${data.annual_rent})`);
+      return NextResponse.json({ saved: false, reason: "implausible_rent" });
     }
 
     const userText = userTurnsOnly(conversation);

@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
-import { rateLimit } from "@/app/lib/rate-limit";
-import { dbConfigured, rentLookup, RentLookup, areasInState, stateForArea } from "@/app/lib/db";
+import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
+import {
+  dbConfigured, rentLookup, RentLookup, areasInState, stateForArea,
+  createChatSession, appendChatMessages,
+} from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
 import { parseAmounts, userTurnsOnly, amountCorroborated } from "@/app/lib/amounts";
 import { fillMissingFields, areaCandidates } from "@/app/lib/extract";
@@ -356,36 +359,69 @@ ${conversation}`;
 
 export const dynamic = "force-dynamic";
 
+const MAX_MESSAGE_CHARS = 2_000;
+
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
-  if (!rateLimit(ip, 20, 60_000)) {
+  if (!(await rateLimit(ipBucket("chat", ip), 20, 60_000))) {
     return NextResponse.json({ error: "Too many messages. Please wait a moment." }, { status: 429 });
+  }
+
+  if (!dbConfigured()) {
+    return NextResponse.json(
+      { error: "RentBot is unavailable right now. Please try again shortly." },
+      { status: 503 }
+    );
   }
 
   try {
     const body = await req.json();
-    const { messages } = body;
+    const message: unknown = body?.message;
 
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ error: "Invalid messages format." }, { status: 400 });
+    if (typeof message !== "string" || message.trim() === "") {
+      return NextResponse.json({ error: "Message is required." }, { status: 400 });
+    }
+    if (message.length > MAX_MESSAGE_CHARS) {
+      return NextResponse.json({ error: "That message is too long." }, { status: 400 });
     }
 
-    const MAX_MESSAGES = 40;
-    const trimmed = messages.slice(-MAX_MESSAGES);
+    // The client carries a session id, never the transcript. Anything it sends
+    // that isn't a live session id gets a fresh session rather than being
+    // trusted — that is the whole point of moving the transcript server-side.
+    const claimedId: unknown = body?.sessionId;
+    let sessionId =
+      typeof claimedId === "string" && /^[0-9a-f-]{36}$/i.test(claimedId) ? claimedId : null;
 
-    for (const msg of trimmed) {
-      if (
-        typeof msg !== "object" ||
-        !msg ||
-        typeof msg.role !== "string" ||
-        typeof msg.content !== "string" ||
-        !["user", "assistant"].includes(msg.role)
-      ) {
-        return NextResponse.json({ error: "Invalid message format." }, { status: 400 });
+    let state = sessionId
+      ? await appendChatMessages(sessionId, [{ role: "user", content: message }], 1)
+      : null;
+
+    if (!state) {
+      sessionId = await createChatSession();
+      if (!sessionId) {
+        return NextResponse.json(
+          { error: "Couldn't start the chat. Please try again." },
+          { status: 503 }
+        );
+      }
+      state = await appendChatMessages(sessionId, [{ role: "user", content: message }], 1);
+      if (!state) {
+        return NextResponse.json(
+          { error: "Couldn't start the chat. Please try again." },
+          { status: 503 }
+        );
       }
     }
 
-    const lastUserMessage: string = trimmed[trimmed.length - 1]?.content ?? "";
+    const trimmed = state.messages;
+    const lastUserMessage = message;
+
+    // Every exit point records the reply, so the stored transcript stays the
+    // real conversation — that is what extraction will later read.
+    const replyWith = async (reply: string, suggestions: string[]) => {
+      await appendChatMessages(sessionId!, [{ role: "assistant", content: reply }]);
+      return NextResponse.json({ sessionId, reply, suggestions });
+    };
 
     let systemPrompt = SYSTEM_PROMPT;
     const conversationText = trimmed
@@ -443,10 +479,10 @@ export async function POST(req: NextRequest) {
           if (mentionsRent(lastUserMessage)) {
             const verdictReply = composeVerdictReply(lookup);
             if (verdictReply) {
-              return NextResponse.json({
-                reply: verdictReply,
-                suggestions: ["What fees should I expect?", "How do I negotiate rent?"],
-              });
+              return replyWith(verdictReply, [
+                "What fees should I expect?",
+                "How do I negotiate rent?",
+              ]);
             }
           }
           // 2) User asking the average → answer directly; if we lack their exact
@@ -456,10 +492,7 @@ export async function POST(req: NextRequest) {
             const altAreas = askedArea && !hasAreaData ? await areasInState(state) : [];
             const avgReply = composeAverageReply(lookup, askedArea, altAreas);
             if (avgReply) {
-              return NextResponse.json({
-                reply: avgReply,
-                suggestions: ["Is my rent fair?", "Add my rent data"],
-              });
+              return replyWith(avgReply, ["Is my rent fair?", "Add my rent data"]);
             }
           }
           // 3) Otherwise ground the LLM with real figures while gathering details.
@@ -479,17 +512,15 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       if (err instanceof LLMUnavailableError) {
         console.error("Chat: all LLM providers unavailable:", err.message);
-        return NextResponse.json({
-          reply:
-            "I can't reach my assistant right now 😅 — but I can still check rent for you. Tell me the state, the apartment type and what you pay a year, and I'll give you the numbers.",
-          suggestions: ["Is my rent fair?", "Calculate my move-in cost"],
-        });
+        return replyWith(
+          "I can't reach my assistant right now 😅 — but I can still check rent for you. Tell me the state, the apartment type and what you pay a year, and I'll give you the numbers.",
+          ["Is my rent fair?", "Calculate my move-in cost"]
+        );
       }
       throw err;
     }
 
-    const suggestions = getSuggestions(lastUserMessage, reply);
-    return NextResponse.json({ reply, suggestions });
+    return replyWith(reply, getSuggestions(lastUserMessage, reply));
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("Chat API error:", message);

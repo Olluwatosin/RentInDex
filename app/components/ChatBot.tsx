@@ -33,9 +33,9 @@ export default function ChatBot() {
   const [isTyping, setIsTyping] = useState(false);
   const [hasInteracted, setHasInteracted] = useState(false);
   const userMessageCount = useRef(0);
-  const conversationId = useRef<string>(
-    typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now())
-  );
+  // Issued by the server on the first reply. The transcript itself lives
+  // server-side now, so this is the only thread identity the client holds.
+  const sessionId = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
@@ -60,16 +60,13 @@ export default function ChatBot() {
     if (isOpen) setTimeout(() => inputRef.current?.focus(), 300);
   }, [isOpen]);
 
-  const extractData = async (allMessages: Message[]) => {
-    const conversation = allMessages
-      .slice(1)
-      .map((m) => `${m.role === "user" ? "User" : "Bot"}: ${m.content}`)
-      .join("\n");
+  const extractData = async () => {
+    if (!sessionId.current) return;
     try {
       const res = await fetch("/api/chatbot/extract-data", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation, conversationId: conversationId.current }),
+        body: JSON.stringify({ sessionId: sessionId.current }),
       });
       const data = await res.json();
       // Confirm only on a real save, and only once per conversation.
@@ -101,18 +98,14 @@ export default function ChatBot() {
     userMessageCount.current += 1;
 
     try {
-      const history = [...messages.slice(1), userMsg].map((m) => ({
-        role: m.role === "bot" ? "assistant" : "user",
-        content: m.content,
-      }));
-
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ sessionId: sessionId.current, message: text }),
       });
 
       const data = await res.json();
+      if (data.sessionId) sessionId.current = data.sessionId;
 
       if (!res.ok || !data.reply) {
         setMessages((prev) => [
@@ -133,11 +126,11 @@ export default function ChatBot() {
       ];
       setMessages(finalMessages);
 
-      // Extract from the 3rd user message onward. Upsert keyed by conversationId
+      // Extract from the 3rd user message onward. Upsert keyed by the session id
       // means repeated calls update one row (no duplicates) and late answers
       // like electricity get captured whenever they arrive.
       if (userMessageCount.current >= 3) {
-        extractData(finalMessages);
+        extractData();
       }
     } catch {
       setMessages((prev) => [
