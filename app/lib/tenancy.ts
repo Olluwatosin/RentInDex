@@ -264,7 +264,9 @@ export function checkAdvanceRent(q: AdvanceRentQuery): Finding {
     headline: `Demanding ${q.monthsDemanded} months in advance is unlawful — the limit is ${limitLabel}.`,
     detail: [
       `It is an offence for a landlord or agent to demand or receive more than ${limitLabel} in advance from you, punishable by a ₦100,000 fine or three months' imprisonment.`,
-      `Know this before you act: the Law makes it an offence for the tenant to *pay* it as well, not only for the landlord to demand it. In a market where two years upfront is routinely asked for, that cuts both ways — which is exactly why so few cases are ever brought.`,
+      // No markdown here — these strings are rendered as plain text on the web
+      // page and as plain text in a forwarded message.
+      `Know this before you act: the Law makes it an offence for the tenant to pay it as well, not only for the landlord to demand it. In a market where two years upfront is routinely asked for, that cuts both ways — which is exactly why so few cases are ever brought.`,
     ],
     citations,
     actions: [
@@ -394,6 +396,102 @@ export function checkEviction(q: EvictionQuery): Finding {
       "Do not retaliate in kind. Your position is strongest while the unlawful act is entirely on their side.",
     ],
   };
+}
+
+// ─── one entry point ─────────────────────────────────────────────────────────
+
+export type Situation = "increase" | "advance_rent" | "notice" | "eviction";
+
+export interface TenancyQuery {
+  area?: string | null;
+  situation?: string | null;
+  tenancyType?: string | null;
+  monthsDemanded?: number;
+  currentRent?: number;
+  proposedRent?: number;
+  agreementStatesPeriod?: boolean;
+  isSittingTenant?: boolean;
+  lockedOut?: boolean;
+  propertyDamaged?: boolean;
+  threatened?: boolean;
+  utilitiesCut?: boolean;
+  hasCourtOrder?: boolean;
+}
+
+const TENANCY_TYPES: TenancyType[] = [
+  "at_will", "monthly", "quarterly", "half_yearly", "yearly", "fixed_term",
+];
+
+/**
+ * Resolve a situation to its findings.
+ *
+ * The API route, the share-card image and the page's link preview all call
+ * this, so a forwarded card cannot drift from the answer the page gave. Three
+ * renderings of one computation, not three implementations of it.
+ */
+export function buildFindings(q: TenancyQuery): {
+  coverage: Coverage;
+  findings: Finding[];
+} {
+  const coverage = checkCoverage(q.area ?? null);
+  const findings: Finding[] = [coverage.finding];
+
+  const tenancyType: TenancyType = TENANCY_TYPES.includes(q.tenancyType as TenancyType)
+    ? (q.tenancyType as TenancyType)
+    : "yearly";
+
+  switch (q.situation) {
+    case "notice":
+      findings.push(
+        checkNotice({ tenancyType, agreementStatesPeriod: q.agreementStatesPeriod })
+      );
+      break;
+    case "advance_rent":
+      if (typeof q.monthsDemanded === "number" && q.monthsDemanded > 0) {
+        findings.push(
+          checkAdvanceRent({
+            monthsDemanded: q.monthsDemanded,
+            isSittingTenant: Boolean(q.isSittingTenant),
+            tenancyType,
+          })
+        );
+      }
+      break;
+    case "increase":
+      if (
+        typeof q.currentRent === "number" &&
+        typeof q.proposedRent === "number" &&
+        q.currentRent > 0
+      ) {
+        findings.push(
+          checkIncrease({ currentRent: q.currentRent, proposedRent: q.proposedRent })
+        );
+      }
+      break;
+    case "eviction":
+      findings.push(
+        checkEviction({
+          lockedOut: q.lockedOut,
+          propertyDamaged: q.propertyDamaged,
+          threatened: q.threatened,
+          utilitiesCut: q.utilitiesCut,
+          hasCourtOrder: q.hasCourtOrder,
+        })
+      );
+      break;
+  }
+
+  return {
+    coverage,
+    findings: coverage.covered
+      ? findings
+      : findings.map((f) => qualifyForExcludedArea(f, coverage.matchedArea!)),
+  };
+}
+
+/** The finding worth putting on a share card — the answer, not the preamble. */
+export function headlineFinding(findings: Finding[]): Finding {
+  return findings.find((f) => f.verdict !== "info") ?? findings[0];
 }
 
 // ─── exempt-area qualification ───────────────────────────────────────────────

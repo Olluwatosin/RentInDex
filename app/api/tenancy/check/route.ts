@@ -1,16 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
-import {
-  checkCoverage,
-  checkNotice,
-  checkAdvanceRent,
-  checkIncrease,
-  checkEviction,
-  qualifyForExcludedArea,
-  LAGOS_TENANCY_BILL_2025,
-  TenancyType,
-  Finding,
-} from "@/app/lib/tenancy";
+import { buildFindings, LAGOS_TENANCY_BILL_2025 } from "@/app/lib/tenancy";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +14,6 @@ export const dynamic = "force-dynamic";
 // two-bedroom: confident, well-formatted and wrong, about something a person is
 // going to act on.
 const SUPPORTED_STATES = ["Lagos"];
-
-const TENANCY_TYPES: TenancyType[] = [
-  "at_will", "monthly", "quarterly", "half_yearly", "yearly", "fixed_term",
-];
 
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
@@ -47,75 +33,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       supported: false,
       state,
-      message:
-        `We only have verified tenancy law for Lagos so far. ${state} has its own Recovery of Premises law with different notice periods and different protections, and we would rather tell you that than guess at it.`,
+      message: `We only have verified tenancy law for Lagos so far. ${state} has its own Recovery of Premises law with different notice periods and different protections, and we would rather tell you that than guess at it.`,
       supportedStates: SUPPORTED_STATES,
     });
   }
 
+  const num = (v: unknown) => (typeof v === "number" ? v : undefined);
+  const flag = (v: unknown) => v === true;
+  const asked = Array.isArray(body.questions) ? body.questions : [];
   const area = typeof body.area === "string" ? body.area : null;
-  const coverage = checkCoverage(area);
 
-  const findings: Finding[] = [coverage.finding];
-
-  const tenancyType: TenancyType = TENANCY_TYPES.includes(body.tenancyType as TenancyType)
-    ? (body.tenancyType as TenancyType)
-    : "yearly";
-
-  const asked = Array.isArray(body.questions)
-    ? (body.questions as unknown[]).filter((q): q is string => typeof q === "string")
-    : [];
-
-  if (asked.includes("notice")) {
-    findings.push(
-      checkNotice({
-        tenancyType,
-        agreementStatesPeriod: body.agreementStatesPeriod === true,
-      })
-    );
-  }
-
-  if (asked.includes("advance_rent") && typeof body.monthsDemanded === "number") {
-    findings.push(
-      checkAdvanceRent({
-        monthsDemanded: body.monthsDemanded,
-        isSittingTenant: body.isSittingTenant === true,
-        tenancyType,
-      })
-    );
-  }
-
-  if (
-    asked.includes("increase") &&
-    typeof body.currentRent === "number" &&
-    typeof body.proposedRent === "number"
-  ) {
-    findings.push(
-      checkIncrease({
-        currentRent: body.currentRent,
-        proposedRent: body.proposedRent,
-      })
-    );
-  }
-
-  if (asked.includes("eviction")) {
-    findings.push(
-      checkEviction({
-        lockedOut: body.lockedOut === true,
-        propertyDamaged: body.propertyDamaged === true,
-        threatened: body.threatened === true,
-        utilitiesCut: body.utilitiesCut === true,
-        hasCourtOrder: body.hasCourtOrder === true,
-      })
-    );
-  }
-
-  // A verdict has to be true for the person holding it. In an exempt area the
-  // sections still describe the rest of Lagos, but they are not this renter's
-  // protection, and the card travels without the page's banner.
-  const qualified = coverage.covered
-    ? findings
-    : findings.map((f) => qualifyForExcludedArea(f, coverage.matchedArea!));
+  // One engine call, shared with the share-card image and the link preview, so
+  // a forwarded card can never disagree with the page that produced it.
+  const { coverage, findings } = buildFindings({
+    area,
+    situation: typeof asked[0] === "string" ? (asked[0] as string) : null,
+    tenancyType: typeof body.tenancyType === "string" ? body.tenancyType : null,
+    monthsDemanded: num(body.monthsDemanded),
+    currentRent: num(body.currentRent),
+    proposedRent: num(body.proposedRent),
+    agreementStatesPeriod: flag(body.agreementStatesPeriod),
+    isSittingTenant: flag(body.isSittingTenant),
+    lockedOut: flag(body.lockedOut),
+    propertyDamaged: flag(body.propertyDamaged),
+    threatened: flag(body.threatened),
+    utilitiesCut: flag(body.utilitiesCut),
+    hasCourtOrder: flag(body.hasCourtOrder),
+  });
 
   return NextResponse.json(
     {
@@ -124,7 +68,7 @@ export async function POST(req: NextRequest) {
       area,
       coveredByLaw: coverage.covered,
       excludedArea: coverage.matchedArea,
-      findings: qualified,
+      findings,
       pendingReform: LAGOS_TENANCY_BILL_2025,
       disclaimer:
         "This quotes the Lagos State Tenancy Law 2011 so you can read it yourself. It is information, not legal advice, and it cannot account for what your own tenancy agreement says.",

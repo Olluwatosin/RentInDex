@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 // Know Your Rights — the Lagos Tenancy Law 2011, answered for one renter's
 // situation.
@@ -99,14 +100,82 @@ export default function RightsChecker() {
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
+  const [pendingRestore, setPendingRestore] = useState<Situation | null>(null);
+
+  const params = useSearchParams();
+  const restored = useRef(false);
+
+  // The inputs, as the URL that reproduces this answer. Shared links preview as
+  // the verdict card and land the recipient on the same result.
+  const queryFor = useCallback(
+    (s: Situation): string => {
+      const q = new URLSearchParams({ situation: s });
+      if (area.trim()) q.set("area", area.trim());
+      if (s === "notice" || s === "advance_rent") q.set("type", tenancyType);
+      if (s === "advance_rent") {
+        q.set("months", String(toNumber(monthsDemanded)));
+        if (isSittingTenant) q.set("sitting", "1");
+      }
+      if (s === "notice" && agreementStatesPeriod) q.set("agreed", "1");
+      if (s === "increase") {
+        q.set("from", String(toNumber(currentRent)));
+        q.set("to", String(toNumber(proposedRent)));
+      }
+      if (s === "eviction") {
+        const map: Record<string, string> = {
+          lockedOut: "lockedOut", propertyDamaged: "damaged",
+          threatened: "threatened", utilitiesCut: "utilities", hasCourtOrder: "order",
+        };
+        for (const [k, short] of Object.entries(map)) if (harassment[k]) q.set(short, "1");
+      }
+      return q.toString();
+    },
+    [area, tenancyType, monthsDemanded, isSittingTenant, agreementStatesPeriod,
+     currentRent, proposedRent, harassment]
+  );
 
   const reset = () => {
     setAnswer(null);
     setSituation(null);
+    window.history.replaceState(null, "", "/rights");
   };
 
-  async function submit() {
-    if (!situation) return;
+  // Arriving from a forwarded link: rebuild the inputs and show the answer.
+  useEffect(() => {
+    if (restored.current) return;
+    const s = params.get("situation") as Situation | null;
+    if (!s || !SITUATIONS.some((x) => x.key === s)) return;
+    restored.current = true;
+
+    setSituation(s);
+    setArea(params.get("area") ?? "");
+    setTenancyType(params.get("type") ?? "yearly");
+    setMonthsDemanded(params.get("months") ?? "24");
+    setIsSittingTenant(params.get("sitting") === "1");
+    setAgreementStatesPeriod(params.get("agreed") === "1");
+    setCurrentRent(formatDigits(params.get("from") ?? ""));
+    setProposedRent(formatDigits(params.get("to") ?? ""));
+    setHarassment({
+      lockedOut: params.get("lockedOut") === "1",
+      propertyDamaged: params.get("damaged") === "1",
+      threatened: params.get("threatened") === "1",
+      utilitiesCut: params.get("utilities") === "1",
+      hasCourtOrder: params.get("order") === "1",
+    });
+    setPendingRestore(s);
+  }, [params]);
+
+  // Run the restored query once state has actually landed.
+  useEffect(() => {
+    if (!pendingRestore) return;
+    setPendingRestore(null);
+    void submit(pendingRestore);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRestore]);
+
+  async function submit(forSituation?: Situation) {
+    const s = forSituation ?? situation;
+    if (!s) return;
     setLoading(true);
     try {
       const res = await fetch("/api/tenancy/check", {
@@ -116,7 +185,7 @@ export default function RightsChecker() {
           state: "Lagos",
           area: area.trim() || null,
           tenancyType,
-          questions: [situation],
+          questions: [s],
           agreementStatesPeriod,
           isSittingTenant,
           monthsDemanded: toNumber(monthsDemanded),
@@ -126,6 +195,8 @@ export default function RightsChecker() {
         }),
       });
       setAnswer(await res.json());
+      // Make the answer addressable so it can be forwarded.
+      window.history.replaceState(null, "", `/rights?${queryFor(s)}`);
     } catch {
       setAnswer({
         supported: true,
@@ -147,11 +218,16 @@ export default function RightsChecker() {
   // part that carries weight in an argument with a landlord.
   function shareText(f: Finding): string {
     const c = f.citations[0];
+    // The link carries the inputs, so WhatsApp previews it as the verdict card
+    // and whoever receives it lands on this same answer, not an empty form.
+    const link = situation
+      ? `https://rentindex.com.ng/rights?${queryFor(situation)}`
+      : "https://rentindex.com.ng/rights";
     return [
       `⚖️ ${f.headline}`,
       c ? `\n${c.law}, ${c.section}:\n"${c.quote}"` : "",
       f.actions?.length ? `\nWhat to do: ${f.actions[0]}` : "",
-      `\nCheck your own situation 👉 rentindex.com.ng/rights`,
+      `\nCheck your own situation 👉 ${link}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -371,7 +447,7 @@ export default function RightsChecker() {
             )}
 
             <button
-              onClick={submit}
+              onClick={() => submit()}
               disabled={loading}
               className="w-full rounded-full bg-[#F59E0B] px-6 py-3.5 font-bold text-white transition hover:bg-[#D97706] disabled:opacity-60"
             >
