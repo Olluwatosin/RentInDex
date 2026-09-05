@@ -6,6 +6,7 @@ import {
   checkAdvanceRent,
   checkIncrease,
   checkEviction,
+  qualifyForExcludedArea,
   LAGOS_TENANCY_BILL_2025,
   TenancyType,
   Finding,
@@ -109,6 +110,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // A verdict has to be true for the person holding it. In an exempt area the
+  // sections still describe the rest of Lagos, but they are not this renter's
+  // protection, and the card travels without the page's banner.
+  const qualified = coverage.covered
+    ? findings
+    : findings.map((f) => qualifyForExcludedArea(f, coverage.matchedArea!));
+
   return NextResponse.json(
     {
       supported: true,
@@ -116,7 +124,7 @@ export async function POST(req: NextRequest) {
       area,
       coveredByLaw: coverage.covered,
       excludedArea: coverage.matchedArea,
-      findings,
+      findings: qualified,
       pendingReform: LAGOS_TENANCY_BILL_2025,
       disclaimer:
         "This quotes the Lagos State Tenancy Law 2011 so you can read it yourself. It is information, not legal advice, and it cannot account for what your own tenancy agreement says.",

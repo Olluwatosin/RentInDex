@@ -396,6 +396,49 @@ export function checkEviction(q: EvictionQuery): Finding {
   };
 }
 
+// ─── exempt-area qualification ───────────────────────────────────────────────
+
+/**
+ * Re-state a finding for a renter the Law does not actually cover.
+ *
+ * s.4, s.13, s.37 and s.44 are all provisions of a Law that expressly does not
+ * apply in Apapa, Ikeja GRA, Ikoyi or Victoria Island. Handing an Ikoyi renter
+ * a card reading "Demanding 24 months in advance is unlawful" is wrong for
+ * them — and that card is the thing they screenshot and send, stripped of any
+ * banner the page displayed around it.
+ *
+ * So the qualification travels with the finding rather than sitting beside it:
+ * the verdict softens, the headline names the exemption, and the caveat leads
+ * the detail. Same discipline as never labelling a city-wide band as
+ * neighbourhood data.
+ */
+export function qualifyForExcludedArea(f: Finding, excludedArea: string): Finding {
+  if (f.verdict === "info" && f.headline.includes(excludedArea)) return f; // the coverage card itself
+
+  const softened: Verdict = f.verdict === "unlawful" || f.verdict === "lawful" ? "depends" : f.verdict;
+
+  const rewritten =
+    f.verdict === "unlawful"
+      ? `In most of Lagos this would be unlawful — but ${excludedArea} is exempt from the Law.`
+      : f.verdict === "lawful"
+      ? `In most of Lagos this is within the law — but ${excludedArea} is exempt, so it turns on your agreement.`
+      : `${f.headline} (Note: ${excludedArea} is exempt from this Law.)`;
+
+  return {
+    ...f,
+    verdict: softened,
+    headline: rewritten,
+    detail: [
+      `The Tenancy Law 2011 does not apply in ${excludedArea}, so the section below is not a protection you can rely on at this address. It is still worth knowing: it is the standard everywhere else in Lagos, and the 2025 Bill would extend it here.`,
+      ...f.detail,
+    ],
+    actions: [
+      `Your tenancy agreement governs here in a way it does not elsewhere in Lagos — read its terms before you act.`,
+      ...(f.actions ?? []),
+    ],
+  };
+}
+
 // ─── the 2025 Bill ───────────────────────────────────────────────────────────
 //
 // Live, widely reported, and NOT law. Renters are already repeating the 5%
