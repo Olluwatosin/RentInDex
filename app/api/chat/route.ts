@@ -3,11 +3,14 @@ import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
 import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
 import {
   dbConfigured, rentLookup, RentLookup, areasInState, stateForArea,
-  createChatSession, appendChatMessages,
+  createChatSession, appendChatMessages, areasForMatching,
 } from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
 import { parseAmounts, userTurnsOnly, amountCorroborated } from "@/app/lib/amounts";
-import { fillMissingFields, areaCandidates } from "@/app/lib/extract";
+import {
+  fillMissingFields, areaCandidates, extractAnnualRent, extractPropertyType,
+  matchKnownArea,
+} from "@/app/lib/extract";
 
 const SYSTEM_PROMPT = `You are RentBot — the AI assistant for RentInDex, Nigeria's first rent intelligence platform.
 
@@ -433,27 +436,43 @@ export async function POST(req: NextRequest) {
       asksAverage(lastUserMessage) || mentionsRent(lastUserMessage) || Boolean(detectState(conversationText));
 
     if (rentIntent && dbConfigured()) {
-      // The model is only one source of these fields, and an unreliable one —
-      // it returns null for everything when the provider is down. Whatever it
-      // misses is filled deterministically below, so the answer engine keeps
-      // working through an LLM outage.
-      const modelFields = await extractLookupFields(conversationText);
-
-      // State may be named directly, or inferred from the area (e.g. "Gwarinpa" → Abuja).
+      // Deterministic extraction runs FIRST, because it is free and this is the
+      // hottest path in the app — a model call per message, on an
+      // unauthenticated endpoint, was most of the LLM bill. When the heuristics
+      // already have the state, area, type and rent there is nothing left to
+      // ask the model, so we don't.
+      //
+      // State may be named directly, or inferred from the area ("Gwarinpa" → Abuja).
       let state = detectState(conversationText);
-      if (!state && modelFields?.area) state = await stateForArea(modelFields.area);
-      // No state and no model (it's down): resolve the state from the place the
-      // user named. Capped at three lookups — a miss costs nothing but a query.
       if (!state) {
+        // Capped at three lookups — a miss costs nothing but a query.
         for (const candidate of areaCandidates(conversationText).slice(0, 3)) {
           state = await stateForArea(candidate);
           if (state) break;
         }
       }
 
+      let knownAreas: string[] = state ? await areasForMatching(state) : [];
+      const heuristicRent = extractAnnualRent(conversationText);
+      const heuristicType = extractPropertyType(conversationText);
+      const heuristicArea = matchKnownArea(conversationText, knownAreas);
+
+      const haveEverything = Boolean(
+        state && heuristicArea && heuristicType && heuristicRent != null
+      );
+      const modelFields = haveEverything
+        ? null
+        : await extractLookupFields(conversationText);
+
+      // The model may name a place we couldn't resolve on our own.
+      if (!state && modelFields?.area) {
+        state = await stateForArea(modelFields.area);
+        if (state) knownAreas = await areasForMatching(state);
+      }
+
       if (state) {
-        // Only pay for the area list when we actually need it to fill a gap.
-        const knownAreas = modelFields?.area ? [] : await areasInState(state);
+        // The model wins wherever it answered; heuristics fill the rest, so the
+        // engine still works with the provider completely down.
         const fields = fillMissingFields(modelFields, conversationText, knownAreas);
         const askedArea = fields.area;
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { dbConfigured, getResponseCount } from "@/app/lib/db";
+import { dbConfigured, getResponseCount, llmUsageToday } from "@/app/lib/db";
 import { activeModel, groqModelHealth } from "@/app/lib/llm";
 
 export const dynamic = "force-dynamic";
@@ -38,9 +38,20 @@ export async function GET() {
     }
   }
 
+  // Today's model spend. Reported rather than checked: exhausting the budget
+  // is a deliberate, safe state — RentBot falls back to deterministic answers —
+  // so it must not turn the health check red. `refused` climbing is the signal
+  // that the cap is actually biting.
+  const usage = dbConfigured() ? await llmUsageToday() : null;
+
   const ok = Object.values(checks).every((c) => c.ok);
   return NextResponse.json(
-    { ok, checkedAt: new Date().toISOString(), checks },
+    {
+      ok,
+      checkedAt: new Date().toISOString(),
+      checks,
+      llmUsageToday: usage ?? undefined,
+    },
     { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } }
   );
 }

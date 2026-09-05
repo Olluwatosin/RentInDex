@@ -1,4 +1,18 @@
 import Groq from "groq-sdk";
+import { llmReserve, llmRecordTokens } from "./db";
+
+// Hard ceiling on model calls per day, across every endpoint and instance.
+//
+// /api/chat is unauthenticated and can make two calls per message, with
+// extraction making a third, and the rate limiter deliberately fails open. A
+// cap is only safe because the answer engine no longer needs a model: rent
+// verdicts and averages are composed in code, so exhausting the budget
+// degrades RentBot to deterministic answers instead of taking it down.
+const DAILY_CALL_LIMIT = Number(process.env.LLM_DAILY_CALL_LIMIT ?? 2000);
+
+// A hung provider call otherwise holds a lambda open until Vercel kills it,
+// which costs money and stalls the user behind a spinner.
+const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 20_000);
 
 // Thrown when no provider could answer. Callers MUST handle this — never let a
 // provider outage reach the user (or the extractor) disguised as model output.
@@ -6,6 +20,16 @@ export class LLMUnavailableError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "LLMUnavailableError";
+  }
+}
+
+// Deliberately a subclass: every caller already degrades gracefully on an
+// outage, and a spent budget should behave identically for the user. The
+// distinct type exists so the logs say which one actually happened.
+export class LLMBudgetExceededError extends LLMUnavailableError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LLMBudgetExceededError";
   }
 }
 
@@ -52,7 +76,7 @@ async function callGroq(
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY is not set");
 
-  const groq = new Groq({ apiKey });
+  const groq = new Groq({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: 1 });
   // Start from the known-good model when we have one, then the rest as backup.
   const order = workingModel
     ? [workingModel, ...CANDIDATE_MODELS.filter((m) => m !== workingModel)]
@@ -96,6 +120,10 @@ async function callGroq(
         console.info(`LLM: using Groq model "${model}"`);
         workingModel = model;
       }
+      const usage = response.usage;
+      if (usage) {
+        void llmRecordTokens(usage.prompt_tokens ?? 0, usage.completion_tokens ?? 0);
+      }
       return content;
     } catch (err) {
       lastErr = err;
@@ -122,6 +150,7 @@ async function callOpenRouter(
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
@@ -173,6 +202,15 @@ export async function callLLM(
   maxTokens: number = 500,
   opts: LLMOptions = {}
 ): Promise<string> {
+  // Claimed before either provider is touched, so the ceiling covers the
+  // fallback too — an outage that pushes every call to OpenRouter is exactly
+  // when an uncapped bill would run away.
+  if (!(await llmReserve(DAILY_CALL_LIMIT))) {
+    throw new LLMBudgetExceededError(
+      `Daily LLM call budget of ${DAILY_CALL_LIMIT} is spent; serving deterministic answers only.`
+    );
+  }
+
   try {
     return await callGroq(messages, systemPrompt, maxTokens, opts);
   } catch (groqErr) {

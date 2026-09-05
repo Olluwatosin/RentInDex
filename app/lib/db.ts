@@ -148,6 +148,21 @@ export async function areasInState(state: string): Promise<string[]> {
   return rows.map((r) => r.area).filter(Boolean);
 }
 
+// Every area name we hold for a state, for recognising a place in free text.
+// Distinct from areasInState, which is capped at the top 8 because it exists to
+// offer the user alternatives, not to match against.
+export async function areasForMatching(state: string): Promise<string[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/areas_for_matching`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({ p_state: state }),
+  });
+  if (!res.ok) return [];
+  const rows = (await res.json()) as { area: string }[];
+  return rows.map((r) => r.area).filter(Boolean);
+}
+
 // Infer the state for an area the user named without a state (e.g. "Gwarinpa").
 export async function stateForArea(area: string): Promise<string | null> {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/find_state_for_area`, {
@@ -241,6 +256,62 @@ export async function appendChatMessages(
 export async function getChatSession(sessionId: string): Promise<ChatSessionState | null> {
   // Appending nothing is the read: same RPC, same null-on-unknown-id contract.
   return appendChatMessages(sessionId, [], 0);
+}
+
+// ─── LLM budget ──────────────────────────────────────────────────────────────
+
+/**
+ * Claim one call against today's budget. False means the day is spent.
+ * Fails OPEN: if the accounting query itself is broken we would rather serve
+ * renters than shut RentBot down over a bookkeeping error.
+ */
+export async function llmReserve(dailyLimit: number): Promise<boolean> {
+  if (!dbConfigured()) return true;
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/llm_reserve`, {
+      method: "POST",
+      headers: headers(),
+      cache: "no-store",
+      body: JSON.stringify({ p_daily_limit: dailyLimit }),
+    });
+    if (!res.ok) {
+      console.error(`llm_reserve failed (${res.status}): ${await res.text()}`);
+      return true;
+    }
+    return (await res.json()) === true;
+  } catch (err) {
+    console.error("llm_reserve threw, allowing call:", err);
+    return true;
+  }
+}
+
+export async function llmRecordTokens(prompt: number, completion: number): Promise<void> {
+  if (!dbConfigured()) return;
+  await fetch(`${SUPABASE_URL}/rest/v1/rpc/llm_record_tokens`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({ p_prompt: prompt, p_completion: completion }),
+  }).catch(() => {});
+}
+
+export interface LLMUsage {
+  day: string;
+  calls: number;
+  refused: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export async function llmUsageToday(): Promise<LLMUsage | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/llm_usage_today`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: "{}",
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as LLMUsage;
 }
 
 /** Drop transcripts untouched for a day. Returns how many went. */
