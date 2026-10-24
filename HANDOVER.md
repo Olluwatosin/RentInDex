@@ -1,0 +1,89 @@
+# Handover status
+
+Working notes for the autonomous stretch that began 24 October 2026, while the
+founder is away. Proposal: https://claude.ai/code/artifact/766643ee-81c8-4951-9f7a-fe5d907cd27d
+
+The point of this file is that the state of the work should take thirty seconds
+to read, not thirty minutes. Newest first.
+
+## Blocked on you
+
+- **The Supabase repository secrets.** `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` are still not set on the GitHub repo, so the
+  weekly scrape has now failed on every scheduled run since 7 September 2026
+  (7 of 7). Until they are set, the index cannot refresh. Either run
+  `gh secret set SUPABASE_URL` / `gh secret set SUPABASE_SERVICE_ROLE_KEY`
+  yourself, or say the word and I will — it means sending a production key to
+  GitHub Actions, which is your call rather than mine.
+- **Any spend**, **Meta business verification** for WhatsApp, and **anything
+  that reaches a real person** (waitlist email, public posts, DNS). Unchanged
+  from the proposal.
+
+## Done
+
+### Phase 1 — a net under the logic
+
+- `supabase/migrations/` now holds the whole database: 8 tables, 24 indexes, 18
+  constraints, the RLS posture and all 14 functions, `rent_lookup` included.
+  Previously none of this was in the repository — it existed only inside the
+  live Supabase project, with no history and no way back.
+  Verified by rebuilding from nothing in a throwaway Postgres and comparing a
+  151-line structural fingerprint against production: **identical**, including
+  every function body.
+- `npm test` — 59 unit tests over the pure logic. `tenancy.ts` is covered case
+  by case, and every statute test names the section it encodes, so a failure
+  says which provision the code stopped honouring.
+- `npm run test:db` — 47 golden assertions on `rent_lookup`: the geography
+  ladder, when the property-type filter gets dropped, actual-beats-asking,
+  confidence grades, outlier exclusion, the `rent_estimate` trigger. They seed a
+  state no real row uses and roll back, so they cannot touch real data.
+- `.github/workflows/ci.yml` — typecheck, unit tests and build on every push,
+  plus the database job, which also proves the migrations still apply cleanly to
+  an empty database. That is the check that stops the repo drifting from the
+  live project again.
+- `tsx` added as a dev dependency: Node 20 cannot strip types natively.
+
+### Phase 0 — making a dead pipeline impossible to miss
+
+- The scrape workflow now opens (or updates) a GitHub issue on any failed
+  scheduled run. It reuses one issue for an ongoing outage rather than filing a
+  new one every Monday — fifty duplicate issues are as easy to ignore as none.
+- `/api/health` gained a `dataFreshness` check: red when the newest listing is
+  more than 14 days old, i.e. two missed weekly cycles. It reads 52 days right
+  now, which is the alarm that should have sounded on 7 September.
+- Workflow actions bumped to `@v5` / Node 22, clearing the deprecation warning
+  on every run.
+
+### Fixed along the way
+
+- A rent rise too small to round to 1% was reported as "That is not an
+  increase." ₦800,000 → ₦802,000 is a real increase and a renter might have
+  acted on that. Found by writing the test for it.
+
+## Flagged, not changed
+
+- **s.4(1) is silent on quarterly and half-yearly sitting tenants.** It names
+  only "a monthly tenant" (six months) and "a yearly tenant" (one year). The
+  engine gives quarterly and half-yearly sitting tenants the one-year limit,
+  which is an interpretation rather than something the statute says. Pinned by a
+  test and left alone — it wants a lawyer's view, not my guess.
+- **The `areas` table is unused.** Every `area_id` is null and `rent_lookup`
+  matches on the raw text columns instead. Kept, because the normalisation it
+  was built for is still worth doing.
+- **`waitlist` holds zero rows.** Signups are meant to land there before being
+  pushed to Brevo. Needs an end-to-end check that this is Brevo working rather
+  than a signup path dropping people.
+- **The README describes a product we no longer have** — Resend and Sheets as
+  the primary stack, no mention of Supabase, the scrapers, the calculator or the
+  rights engine. Next up, with a `CLAUDE.md` so each session stops re-deriving
+  the architecture.
+
+## Next, in order
+
+1. Fix Jiji (last run parsed 24, wrote 0) and build the PropertyPro scraper.
+2. Deepen the NPC crawl on thin neighbourhoods — 181 of 963 area-and-type cells
+   are at n ≥ 5, and a committed coverage report so that is a number we watch.
+3. Wire market movement into the increase checker, so s.37(2)(a) is answered
+   with evidence and not just cited.
+4. Turn a thin-data answer into a question, so every gap collects crowd data.
+5. Pidgin in RentBot; the WhatsApp adapter behind a provider interface.
