@@ -134,6 +134,50 @@ export async function countListings(): Promise<number> {
   return total ? parseInt(total, 10) : 0;
 }
 
+export interface IndexFreshness {
+  /** When the most recent listing entered the index. */
+  newestListing: string | null;
+  /** When a scraper last completed successfully. */
+  lastSuccessfulScrape: string | null;
+  /** Whole days since the newest listing, or null when the index is empty. */
+  ageDays: number | null;
+}
+
+// How old is the asking-price half of the index?
+//
+// The weekly refresh failed silently for seven consecutive weeks, and the only
+// reason anyone could tell afterwards was the scrape_runs table. Nothing
+// surfaced it: the site served stale prices as current ones and returned 200
+// throughout. So the age of the data is now a health signal in its own right,
+// checked by /api/health alongside the LLM and the database.
+export async function indexFreshness(): Promise<IndexFreshness> {
+  const q = async (path: string) => {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+      headers: headers(),
+      cache: "no-store",
+    });
+    if (!res.ok) throw new Error(`indexFreshness failed (${res.status})`);
+    return res.json();
+  };
+
+  const [listings, runs] = await Promise.all([
+    q("listings_data?select=scraped_at&order=scraped_at.desc&limit=1"),
+    q("scrape_runs?select=finished_at&ok=is.true&order=started_at.desc&limit=1"),
+  ]);
+
+  const newestListing = (listings as { scraped_at: string }[])[0]?.scraped_at ?? null;
+  const lastSuccessfulScrape =
+    (runs as { finished_at: string | null }[])[0]?.finished_at ?? null;
+
+  return {
+    newestListing,
+    lastSuccessfulScrape,
+    ageDays: newestListing
+      ? Math.floor((Date.now() - new Date(newestListing).getTime()) / 86_400_000)
+      : null,
+  };
+}
+
 // Areas we have data for in a state (most-covered first) — for RentBot to
 // offer real alternatives when it lacks the exact place a user asked about.
 export async function areasInState(state: string): Promise<string[]> {

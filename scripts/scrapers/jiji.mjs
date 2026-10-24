@@ -160,6 +160,15 @@ async function main() {
       let json;
       try {
         const res = await fetch(url, { headers: { "User-Agent": UA, Accept: "application/json" } });
+        // Jiji answers 404 for a page past the last one, so for every region
+        // that has fewer pages than we asked for, a healthy run ends on a 404.
+        // Logged as the end of results rather than as a failure: a normal run
+        // printing a dozen red crosses is how I came to misread this scraper as
+        // broken when it was working perfectly.
+        if (res.status === 404) {
+          console.log(`  · ${region} p${page}: no page ${page} — end of results`);
+          break;
+        }
         if (!res.ok) {
           console.error(`  ✗ ${region} p${page}: HTTP ${res.status} — stopping region`);
           break;

@@ -6,6 +6,12 @@
 #
 # Requires two repository secrets:
 #   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#
+# This workflow failed on every scheduled run for seven consecutive weeks
+# because those secrets were never set, and nothing said so — the index simply
+# stopped being refreshed while the site went on quoting it. The `alert` job
+# below exists so that cannot recur: any failure opens or updates a GitHub
+# issue, which notifies the repository owner.
 name: Scrape listings
 
 on:
@@ -34,16 +40,17 @@ jobs:
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       DRY: ${{ inputs.dry_run && '--dry-run' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Check credentials are present
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
             echo "::error::Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY repository secrets."
+            echo "Set them under Settings → Secrets and variables → Actions."
             exit 1
           fi
 
@@ -55,3 +62,54 @@ jobs:
       - name: Scrape NigeriaPropertyCentre
         if: always()
         run: node scripts/scrapers/npc.mjs $DRY
+
+  alert:
+    # A silent failure is the actual bug this guards against, so the alert runs
+    # whenever the scrape did not succeed — including when it never started.
+    needs: scrape
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # One issue for the whole outage rather than a new one every Monday:
+          # fifty duplicate issues are as easy to ignore as no issue at all.
+          existing=$(gh issue list --repo "$REPO" --label scrape-failure --state open \
+                       --limit 1 --json number --jq '.[0].number // empty')
+
+          # A heredoc rather than an indented string, so the issue body does not
+          # arrive with the workflow's indentation baked into it.
+          body=$(cat <<EOF
+          The weekly listings scrape failed on $(date -u '+%Y-%m-%d'). The asking-price
+          half of the index is no longer being refreshed, and the site will go on
+          serving the last data it has as though it were current.
+
+          Run log: $RUN_URL
+
+          Check \`/api/health\` — the \`dataFreshness\` check reports how old the newest
+          listing is. The most likely cause is a missing or expired \`SUPABASE_URL\` /
+          \`SUPABASE_SERVICE_ROLE_KEY\` repository secret.
+          EOF
+          )
+          # Strip the indentation the heredoc kept.
+          body=$(printf '%s\n' "$body" | sed 's/^          //')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+            echo "Commented on existing issue #$existing"
+          else
+            gh label create scrape-failure --repo "$REPO" \
+              --color B60205 --description "The weekly listings scrape is failing" 2>/dev/null || true
+            gh issue create --repo "$REPO" \
+              --title "Weekly listings scrape is failing" \
+              --label scrape-failure \
+              --body "$body"
+          fi

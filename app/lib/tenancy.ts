@@ -300,12 +300,19 @@ export function checkIncrease(q: IncreaseQuery): Finding {
       ? Math.round(((q.proposedRent - q.currentRent) / q.currentRent) * 100)
       : 0;
 
+  // Whether this is an increase is decided by the figures, not by the rounded
+  // percentage. A rise from 800,000 to 802,000 is 0.25%, which rounds to zero —
+  // and telling that renter "that is not an increase" is both wrong and the kind
+  // of thing they would act on.
+  const isIncrease = q.proposedRent > q.currentRent;
+
   return {
     verdict: "depends",
-    headline:
-      pct > 0
-        ? `A ${pct}% increase is not automatically illegal — but you can ask a court to rule it unreasonable.`
-        : `That is not an increase.`,
+    headline: !isIncrease
+      ? `That is not an increase.`
+      : pct > 0
+      ? `A ${pct}% increase is not automatically illegal — but you can ask a court to rule it unreasonable.`
+      : `That increase is not automatically illegal — but you can ask a court to rule it unreasonable.`,
     detail: [
       "Lagos law sets no maximum percentage. Anyone who tells you increases are capped at some figure is wrong, and acting on that will cost you.",
       "What the Law does give you is s.37: as an existing tenant you may apply to the Magistrate's Court (Form TL 11) for an order declaring the increase unreasonable. If the court agrees, it can substitute a specific amount.",
