@@ -60,6 +60,17 @@ to read, not thirty minutes. Newest first.
   increase." ₦800,000 → ₦802,000 is a real increase and a renter might have
   acted on that. Found by writing the test for it.
 
+## Corrected
+
+- **Jiji is not broken.** I reported in the proposal that it "brings in almost
+  nothing" on the strength of a `scrape_runs` row reading parsed 24, sent 0. That
+  row was a single-page dry-run smoke test, taken right after run-logging was
+  added. Jiji's real run predates that table, which is why it is absent from it.
+  It has **1,166 rows in the index — 40% of the total**, and its API is healthy:
+  HTTP 200, 8,856 Lagos listings available, response shape intact, 24 adverts a
+  page. So the phase 2 work shrinks: Jiji needed running, not fixing.
+  PropertyPro is still genuinely unbuilt (0 rows, no scraper).
+
 ## Flagged, not changed
 
 - **s.4(1) is silent on quarterly and half-yearly sitting tenants.** It names
@@ -80,7 +91,8 @@ to read, not thirty minutes. Newest first.
 
 ## Next, in order
 
-1. Fix Jiji (last run parsed 24, wrote 0) and build the PropertyPro scraper.
+1. Build the PropertyPro scraper — the third source, still missing. (Jiji needed
+   no fix; see Corrected above.)
 2. Deepen the NPC crawl on thin neighbourhoods — 181 of 963 area-and-type cells
    are at n ≥ 5, and a committed coverage report so that is a number we watch.
 3. Wire market movement into the increase checker, so s.37(2)(a) is answered
