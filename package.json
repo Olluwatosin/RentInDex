@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:db": "node scripts/test-db.mjs"
+    "test:db": "node scripts/test-db.mjs",
+    "coverage": "node scripts/coverage-report.mjs"
   },
   "dependencies": {
     "@vercel/analytics": "^2.0.1",

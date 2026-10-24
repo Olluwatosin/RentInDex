@@ -19,7 +19,41 @@ to read, not thirty minutes. Newest first.
   that reaches a real person** (waitlist email, public posts, DNS). Unchanged
   from the proposal.
 
+## The biggest thing I found
+
+**The crowd half of the index is structurally dormant, and that is the
+differentiator.** `npm run coverage` now measures it: 202 usable renter rows are
+spread across 186 area-and-type cells — about 1.1 rows each — and `rent_lookup`
+needs 3 in a cell before it will build an `actual` band. **Three cells in the
+country clear that bar. None reach five.**
+
+So in practice nearly every verdict in production is computed from *asking*
+prices, and "high confidence" — which the engine defines as a typed, area-level
+band built from what people actually pay — is unreachable. The code is not
+wrong; there simply is not enough crowd data in any one place for it to fire.
+
+The implication is strategic rather than technical: **the fix is concentration,
+not volume.** One more submission everywhere leaves every cell under the bar.
+Submissions have to be funnelled at cells that are already close — which is what
+`npm run coverage -- --gaps` ranks, weighted by how much asking data sits there
+to compare against. This moves "turn a thin answer into a question" from phase 3
+to the most valuable thing on the list.
+
 ## Done
+
+### Phase 2 — the index is refreshed, and coverage is now measured
+
+- **Ran the Jiji scrape by hand** (it needs no GitHub secret). 1,457 listings
+  parsed and written, Jiji going from 1,166 rows to 2,297. The index is now
+  **4,046 rows, up from 2,915, and 0 days old** — the 53-day staleness is
+  cleared and `/api/health` reads green.
+- **`npm run coverage`** reports what share of real questions we can answer, per
+  state, at both the engine's bar (n ≥ 3) and a credible one (n ≥ 5): currently
+  **29% and 17%** of 1,245 area-and-type cells. `--gaps` ranks where the next
+  submission would actually change an answer. Read-only, safe against production.
+- A healthy Jiji run ends each short region on a 404, which was logged as a red
+  `✗`. A normal run printed a dozen of them, and that is precisely how I came to
+  misread the scraper as broken. Now logged as the end of results.
 
 ### Phase 1 — a net under the logic
 
