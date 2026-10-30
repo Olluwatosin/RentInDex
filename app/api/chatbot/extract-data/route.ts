@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { callLLM, LLMUnavailableError } from "@/app/lib/llm";
 import { writeToSheet, ChatbotRentData } from "@/app/lib/sheets";
-import { dbConfigured, insertRenterRow, getChatSession } from "@/app/lib/db";
+import {
+  dbConfigured,
+  insertRenterRow,
+  getChatSession,
+  recordExtractionOutcome,
+} from "@/app/lib/db";
 import { sendEmail } from "@/app/lib/email";
 import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
 import { detectState } from "@/app/lib/nigeria";
@@ -34,10 +39,26 @@ function parseExtracted(raw: string): ChatbotRentData | null {
   }
 }
 
+// Every exit from this route goes through here, so no outcome can escape the
+// tally. RentBot produced zero rows for its whole life and nothing could say
+// whether that was users or a guard, because each reason below went only to the
+// console and the logs are kept an hour.
+//
+// Recorded without awaiting: the tally must never delay or fail a save.
+function outcome(
+  reason: string,
+  extra: Record<string, unknown> = {},
+  status?: number
+): NextResponse {
+  void recordExtractionOutcome(reason);
+  const body = reason === "saved" ? { saved: true, ...extra } : { saved: false, reason, ...extra };
+  return status ? NextResponse.json(body, { status }) : NextResponse.json(body);
+}
+
 export async function POST(req: NextRequest) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
   if (!(await rateLimit(ipBucket("extract", ip), 10, 60_000))) {
-    return NextResponse.json({ saved: false, reason: "rate_limited" }, { status: 429 });
+    return outcome("rate_limited", {}, 429);
   }
 
   try {
@@ -45,7 +66,7 @@ export async function POST(req: NextRequest) {
     const sessionId: unknown = body?.sessionId;
 
     if (typeof sessionId !== "string" || !/^[0-9a-f-]{36}$/i.test(sessionId)) {
-      return NextResponse.json({ saved: false, reason: "invalid_input" }, { status: 400 });
+      return outcome("invalid_input", {}, 400);
     }
 
     // The transcript comes from our own store, never from the request.
@@ -58,7 +79,7 @@ export async function POST(req: NextRequest) {
     // copy means a renter row can only come from a conversation that happened.
     const session = await getChatSession(sessionId);
     if (!session) {
-      return NextResponse.json({ saved: false, reason: "unknown_session" }, { status: 404 });
+      return outcome("unknown_session", {}, 404);
     }
 
     const conversation = session.messages
@@ -121,7 +142,7 @@ ${conversation}`;
     } catch (err) {
       if (err instanceof LLMUnavailableError) {
         console.error("Extraction: all LLM providers unavailable:", err.message);
-        return NextResponse.json({ saved: false, reason: "llm_unavailable" });
+        return outcome("llm_unavailable");
       }
       throw err;
     }
@@ -130,7 +151,7 @@ ${conversation}`;
 
     if (!data) {
       console.warn("Extraction: model output did not parse:", raw.slice(0, 200));
-      return NextResponse.json({ saved: false, reason: "parse_error" });
+      return outcome("parse_error");
     }
 
     // Hard guard: a rent record is only meaningful with a state AND an actual
@@ -138,7 +159,7 @@ ${conversation}`;
     // what caused "your data was saved" with no rent behind it.
     const hasRealRent = typeof data.annual_rent === "number" && data.annual_rent > 0;
     if (!data.state || !hasRealRent) {
-      return NextResponse.json({ saved: false, reason: "need_state_and_rent" });
+      return outcome("need_state_and_rent");
     }
 
     // Plausibility bound. Requiring a real session raises the cost of poisoning
@@ -154,7 +175,7 @@ ${conversation}`;
       data.annual_rent! > MAX_PLAUSIBLE_RENT
     ) {
       console.warn(`Extraction: implausible rent rejected (${data.annual_rent})`);
-      return NextResponse.json({ saved: false, reason: "implausible_rent" });
+      return outcome("implausible_rent");
     }
 
     const userText = userTurnsOnly(conversation);
@@ -165,7 +186,7 @@ ${conversation}`;
     // lookup — it silently never joins the index it was collected for.
     const canonicalState = detectState(data.state) ?? detectState(userText);
     if (!canonicalState) {
-      return NextResponse.json({ saved: false, reason: "state_not_recognised" });
+      return outcome("state_not_recognised");
     }
 
     // The transcript includes RentBot's own replies, and those quote market
@@ -175,7 +196,7 @@ ${conversation}`;
     // only counts if the USER actually typed it.
     const statedAmounts = parseAmounts(userText);
     if (!amountCorroborated(data.annual_rent!, statedAmounts)) {
-      return NextResponse.json({ saved: false, reason: "rent_not_stated_by_user" });
+      return outcome("rent_not_stated_by_user");
     }
 
     // Same contamination risk for the fee fields. Drop any the user didn't
@@ -266,9 +287,9 @@ ${conversation}`;
       }).catch(() => {});
     }
 
-    return NextResponse.json({ saved: true, confidence: data.confidence });
+    return outcome("saved", { confidence: data.confidence });
   } catch (err) {
     console.error("Extract data error:", err);
-    return NextResponse.json({ saved: false, reason: "server_error" });
+    return outcome("server_error");
   }
 }
