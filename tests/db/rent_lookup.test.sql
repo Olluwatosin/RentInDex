@@ -181,6 +181,36 @@ select pg_temp.expect('renter types more',      area_matches('', 'Lekki', 'Lekki
 select pg_temp.expect('roman and arabic numerals', area_matches('', 'Wuse II', 'Wuse 2')::text, 'true');
 select pg_temp.expect('the word district is ignored', area_matches('', 'Garki', 'Garki District')::text, 'true');
 select pg_temp.expect('different areas do not match', area_matches('', 'Ikeja', 'Yaba')::text, 'false');
+
+-- ── and generous is not the same as careless ─────────────────────────────────
+--
+-- The match used to be any substring anywhere, so a short name matched any
+-- longer one containing those letters. Every pair below is real, from the live
+-- index, inside one state, and was being blended into a single neighbourhood
+-- band. A three-letter name is not the problem — Uyo, Jos, Apo, Ife and Ojo are
+-- all real places — the missing word boundary was.
+
+select pg_temp.expect('Ado is not Idado',       area_matches('', 'Idado', 'Ado')::text, 'false');
+select pg_temp.expect('Ado is not Alagbado',    area_matches('', 'Alagbado', 'Ado')::text, 'false');
+select pg_temp.expect('Ado is not Agbado',      area_matches('', 'Agbado Lagos', 'Ado')::text, 'false');
+select pg_temp.expect('Aba is not Yaba',        area_matches('', 'Yaba', 'Aba')::text, 'false');
+select pg_temp.expect('Aba is not Asaba',       area_matches('', 'Asaba', 'Aba')::text, 'false');
+select pg_temp.expect('Aba is not Alaba',       area_matches('', 'Alaba', 'Aba')::text, 'false');
+select pg_temp.expect('Abi is not Jabi',        area_matches('', 'Jabi', 'Abi')::text, 'false');
+select pg_temp.expect('VI is not Parkview',     area_matches('', 'Parkview', 'VI')::text, 'false');
+select pg_temp.expect('VI is not Games Village', area_matches('', 'Games Village', 'VI')::text, 'false');
+select pg_temp.expect('a nonsense area matches nothing', area_matches('', 'VI', 'Nowhereville')::text, 'false');
+
+-- Short real place names must keep working, which is why length was the wrong fix.
+select pg_temp.expect('Uyo still matches Uyo',       area_matches('', 'Uyo', 'Uyo')::text, 'true');
+select pg_temp.expect('Uyo still matches Uyo Road',  area_matches('', 'Uyo Road', 'Uyo')::text, 'true');
+select pg_temp.expect('Jos still matches Jos North', area_matches('', 'Jos North', 'Jos')::text, 'true');
+select pg_temp.expect('Ojo still matches Ojo',       area_matches('', 'Ojo', 'Ojo')::text, 'true');
+
+-- Punctuation in a real area name must not be read as a regex.
+select pg_temp.expect('a slashed name still matches', area_matches('', 'Sabo / Yaba', 'Yaba')::text, 'true');
+select pg_temp.expect('a bracketed name does not error', area_matches('', 'Giring (Abattoir)', 'Giring')::text, 'true');
+select pg_temp.expect('brackets are matched literally', area_matches('', 'Giring (Abattoir)', 'Abattoir')::text, 'true');
 select pg_temp.expect('an empty query matches nothing', area_matches('', 'Yaba', '')::text, 'false');
 select pg_temp.expect('a null query matches nothing', area_matches('', 'Yaba', null)::text, 'false');
 
