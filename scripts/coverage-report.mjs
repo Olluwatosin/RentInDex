@@ -63,6 +63,26 @@ const bar = (share, width = 24) => {
   return "█".repeat(filled) + "·".repeat(width - filled);
 };
 
+// The funnel is read alongside the index because the two questions are one
+// question: how thin is the crowd half, and is anything arriving to thicken it.
+async function extractionFunnel(days = 30) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/extraction_funnel`, {
+      method: "POST",
+      headers: {
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_days: days }),
+    });
+    if (!res.ok) return null; // migration not applied yet — not an error here
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 const [listings, renters] = await Promise.all([
   fetchAll("listings_data", "id,state,city,area_raw,property_type,is_outlier,scraped_at"),
   fetchAll("renter_data", "id,state,city,area_raw,property_type,is_outlier,rent_estimate"),
@@ -179,6 +199,32 @@ if (totals.actualAtEngine === 0 || totals.actualAtEngine / Math.max(totals.actua
      The fix is concentration, not volume: collecting one more row everywhere
      keeps every cell under the bar. Submissions have to be funnelled at the
      cells already close to it — run with --gaps to see them.`);
+}
+
+// ── is anything arriving? ────────────────────────────────────────────────────
+
+const funnel = await extractionFunnel(30);
+if (funnel) {
+  const total = funnel.reduce((n, o) => n + Number(o.n), 0);
+  const saved = Number(funnel.find((o) => o.outcome === "saved")?.n ?? 0);
+  console.log(`\nRentBot collection, last 30 days`);
+  if (total === 0) {
+    console.log(`  no extraction attempts recorded — either no one reached the third
+  message of a conversation, or the tally has only just been deployed`);
+  } else {
+    console.log(`  ${saved} saved of ${total} attempts  (${pct(saved, total)}%)`);
+    for (const o of funnel) {
+      if (o.outcome === "saved") continue;
+      console.log(`    ${String(o.n).padStart(5)}  ${o.outcome}`);
+    }
+    if (saved === 0) {
+      console.log(`
+  ⚠  Every attempt was refused. The reason above is the thing to fix — this is
+     the funnel that produced zero renter rows for the whole life of the bot.`);
+    }
+  }
+} else {
+  console.log(`\nRentBot collection: no tally yet (extraction_funnel not deployed).`);
 }
 
 if (SHOW_GAPS) {

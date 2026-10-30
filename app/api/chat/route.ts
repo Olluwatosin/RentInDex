@@ -4,9 +4,12 @@ import { rateLimit, ipBucket } from "@/app/lib/rate-limit";
 import {
   dbConfigured, rentLookup, RentLookup, areasInState, stateForArea,
   createChatSession, appendChatMessages, areasForMatching,
+  cellProgress,
+  type CellProgress,
 } from "@/app/lib/db";
 import { detectState } from "@/app/lib/nigeria";
 import { parseAmounts, userTurnsOnly, amountCorroborated } from "@/app/lib/amounts";
+import { concentrationAsk, concentrationNote } from "@/app/lib/contribute";
 import {
   fillMissingFields, areaCandidates, extractAnnualRent, extractPropertyType,
   matchKnownArea,
@@ -123,7 +126,7 @@ function mentionsRent(text: string): boolean {
 // The numbers and the fair/high/low call come from code, never the LLM — this
 // is money advice, so it must be exact and consistent. Returns null if the
 // engine doesn't have enough for a verdict yet.
-function composeVerdictReply(d: RentLookup): string | null {
+function composeVerdictReply(d: RentLookup, progress: CellProgress | null = null): string | null {
   if (d.user_rent == null || d.verdict === "no_rent" || d.verdict === "insufficient") return null;
   if (!d.asking && !d.actual) return null;
 
@@ -201,6 +204,13 @@ function composeVerdictReply(d: RentLookup): string | null {
     );
   }
 
+  // Why the number is an estimate, in terms of the one cell they care about.
+  // Sits right after the breadth caveat because it is the same point made
+  // concretely: not "this is approximate" but "it is approximate because the
+  // sample for your area is this small, and this is what would finish it".
+  const note = concentrationNote(progress);
+  if (note) parts.push(note);
+
   // One enrichment question — grows the unique electricity dataset.
   parts.push(
     `One quick thing to help other renters 🙏 — roughly how many hours of electricity do you get a day, and do you know your band (A/B/C)?`
@@ -222,7 +232,8 @@ function asksAverage(text: string): boolean {
 function composeAverageReply(
   d: RentLookup,
   askedArea: string | null,
-  altAreas: string[]
+  altAreas: string[],
+  progress: CellProgress | null = null
 ): string | null {
   const type = d.property_type ?? "place";
   const hasAreaData =
@@ -252,7 +263,8 @@ function composeAverageReply(
       );
     }
     parts.push(
-      `👉 You can help fix this: if you rent around ${askedArea}, tell me your apartment type and yearly rent and I'll add it, so the next person gets a real answer. What do you pay?`
+      concentrationAsk(progress) ??
+        `👉 You can help fix this: if you rent around ${askedArea}, tell me your apartment type and yearly rent and I'll add it, so the next person gets a real answer. What do you pay?`
     );
     return parts.join("\n\n");
   }
@@ -298,7 +310,8 @@ function composeAverageReply(
   // can do is close that exact gap.
   if (d.area && d.actual && d.actual.level !== "area") {
     parts.push(
-      `👉 Renting around ${d.area}? Tell me your apartment type and yearly rent and I'll add it — that's how ${d.area} gets a real number of its own. Or give me any rent and I'll check if it's fair.`
+      concentrationAsk(progress) ??
+        `👉 Renting around ${d.area}? Tell me your apartment type and yearly rent and I'll add it — that's how ${d.area} gets a real number of its own. Or give me any rent and I'll check if it's fair.`
     );
   } else {
     parts.push(`Want me to check if a specific rent is fair, or add your own? Just tell me the yearly amount 🙂`);
@@ -494,9 +507,21 @@ export async function POST(req: NextRequest) {
           annualRent: userRent,
         });
         if (lookup) {
+          // How close is this exact cell to answering on its own? Only worth a
+          // query when the crowd band is not already area-level — if it is,
+          // there is nothing to ask for.
+          const progress =
+            askedArea && lookup.actual?.level !== "area"
+              ? await cellProgress({
+                  state,
+                  area: askedArea,
+                  propertyType: fields.property_type,
+                })
+              : null;
+
           // 1) User gave their rent → deterministic fairness verdict.
           if (mentionsRent(lastUserMessage)) {
-            const verdictReply = composeVerdictReply(lookup);
+            const verdictReply = composeVerdictReply(lookup, progress);
             if (verdictReply) {
               return replyWith(verdictReply, [
                 "What fees should I expect?",
@@ -509,7 +534,7 @@ export async function POST(req: NextRequest) {
           if (asksAverage(lastUserMessage)) {
             const hasAreaData = lookup.actual?.level === "area" || lookup.asking?.level === "area";
             const altAreas = askedArea && !hasAreaData ? await areasInState(state) : [];
-            const avgReply = composeAverageReply(lookup, askedArea, altAreas);
+            const avgReply = composeAverageReply(lookup, askedArea, altAreas, progress);
             if (avgReply) {
               return replyWith(avgReply, ["Is my rent fair?", "Add my rent data"]);
             }
