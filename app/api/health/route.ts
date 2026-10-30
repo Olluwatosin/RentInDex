@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   dbConfigured,
+  extractionFunnel,
   getResponseCount,
   indexFreshness,
   llmUsageToday,
@@ -76,6 +77,17 @@ export async function GET() {
     }
   }
 
+  // Is RentBot's data collection actually converting?
+  //
+  // It has produced zero renter rows in its entire life, and until now nothing
+  // could say whether that was no users or a guard refusing every conversation —
+  // the reasons went to the console and the logs are kept for an hour. Reported
+  // rather than checked: a day with no chats is not a fault, and the shape of
+  // the funnel is the diagnosis.
+  const extraction = dbConfigured() && checks.database.ok
+    ? await extractionFunnel(30).catch(() => null)
+    : null;
+
   // Today's model spend. Reported rather than checked: exhausting the budget
   // is a deliberate, safe state — RentBot falls back to deterministic answers —
   // so it must not turn the health check red. `refused` climbing is the signal
@@ -89,6 +101,13 @@ export async function GET() {
       checkedAt: new Date().toISOString(),
       checks,
       llmUsageToday: usage ?? undefined,
+      extractionLast30Days: extraction
+        ? {
+            attempts: extraction.reduce((n, o) => n + o.n, 0),
+            saved: extraction.find((o) => o.outcome === "saved")?.n ?? 0,
+            byOutcome: Object.fromEntries(extraction.map((o) => [o.outcome, o.n])),
+          }
+        : undefined,
     },
     { status: ok ? 200 : 503, headers: { "Cache-Control": "no-store" } }
   );
