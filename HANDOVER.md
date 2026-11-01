@@ -19,7 +19,32 @@ to read, not thirty minutes. Newest first.
   that reaches a real person** (waitlist email, public posts, DNS). Unchanged
   from the proposal.
 
-## Latest — 30 October
+## Latest — 1 November
+
+PRs #1 and #2 are **merged to main**. PR #3 is open: a schema drift detector.
+
+`npm run db:drift` builds a reference database from `supabase/migrations/`
+alone, fingerprints it and the live project over 164 structural facts, and
+either reports them in step or names which facts differ and in which direction.
+Scheduled daily and on any push to main touching the migrations; a failure opens
+or updates one issue rather than filing a new one each day.
+
+It caught drift on its first run, and the drift was mine: applying the previous
+three migrations by hand, I pasted paraphrases without the in-body comments
+rather than the files themselves — same logic, different stored definitions.
+Production has been re-applied from the files verbatim and the two sides are now
+identical. **This closes the "no automated path to production" gap I flagged on
+30 October**, in the sense that divergence is now detected daily. It still does
+not *apply* migrations; that remains manual.
+
+Its own tests then found a bug in it: `pg_get_functiondef()` raises on an
+aggregate, and without an `offset 0` fence the planner inlined the function so a
+filtered call reached `pg_catalog`'s aggregates. The unfiltered call worked
+perfectly — only a test that filtered the output found it.
+
+Running totals: 69 unit tests, 105 database assertions.
+
+## Earlier — 30 October
 
 PR #2 (stacked on #1): the ask-when-thin flow, plus two things found building it.
 
