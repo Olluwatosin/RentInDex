@@ -1,0 +1,78 @@
+# Typecheck, build and test on every push and pull request.
+#
+# Added because the project reached a tenancy rules engine and a pricing engine
+# with no automated check of either. Nothing merges to main that does not pass
+# this.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, build, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # No .env in CI, and the build must not need one — every server module
+      # resolves its credentials lazily so a missing key is a runtime 503 rather
+      # than a failed deploy.
+      - name: Build
+        run: npm run build
+
+  database:
+    name: Database golden tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # Applies supabase/migrations/ to an empty database and then runs the
+      # assertions, so this job also proves the migrations still rebuild the
+      # schema from nothing — the check that keeps the repo from drifting away
+      # from the live project again.
+      - name: Database golden tests
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: npm run test:db

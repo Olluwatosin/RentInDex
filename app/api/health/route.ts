@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { dbConfigured, getResponseCount, llmUsageToday } from "@/app/lib/db";
+import {
+  dbConfigured,
+  getResponseCount,
+  indexFreshness,
+  llmUsageToday,
+} from "@/app/lib/db";
 import { activeModel, groqModelHealth } from "@/app/lib/llm";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +39,39 @@ export async function GET() {
         detail: `unreachable (project may be paused): ${
           err instanceof Error ? err.message : err
         }`,
+      };
+    }
+  }
+
+  // Is the index still being refreshed?
+  //
+  // The scrapers run weekly, so two missed cycles means something is broken.
+  // This is the check that would have caught seven weeks of failed scheduled
+  // scrapes on the first Monday instead of the fiftieth day — a stale index
+  // does not break any request, it just makes every answer quietly wrong.
+  const STALE_AFTER_DAYS = 14;
+  if (dbConfigured() && checks.database.ok) {
+    try {
+      const fresh = await indexFreshness();
+      if (fresh.ageDays == null) {
+        checks.dataFreshness = { ok: false, detail: "the index holds no listings at all" };
+      } else {
+        checks.dataFreshness = {
+          ok: fresh.ageDays <= STALE_AFTER_DAYS,
+          detail:
+            `newest listing ${fresh.ageDays}d old` +
+            (fresh.ageDays > STALE_AFTER_DAYS
+              ? ` · stale, the weekly scrape has not landed in ${Math.floor(fresh.ageDays / 7)} week(s)`
+              : "") +
+            (fresh.lastSuccessfulScrape
+              ? ` · last good scrape ${fresh.lastSuccessfulScrape.slice(0, 10)}`
+              : " · no successful scrape on record"),
+        };
+      }
+    } catch (err) {
+      checks.dataFreshness = {
+        ok: false,
+        detail: `could not read index age: ${err instanceof Error ? err.message : err}`,
       };
     }
   }
