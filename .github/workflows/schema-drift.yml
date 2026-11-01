@@ -1,0 +1,131 @@
+# Does supabase/migrations/ still describe the live database?
+#
+# Nothing applies these files on deploy — a Vercel build does not run
+# migrations — so the repository and the project stay in step only while
+# somebody remembers. Three migrations have already been applied by hand, and
+# the first time this check ran it found that two of them had been applied from
+# a paraphrase rather than from the file: same logic, different stored
+# definitions. That is the whole reason it exists.
+#
+# Needs the same repository secrets as the scrape:
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+name: Schema drift
+
+on:
+  schedule:
+    # 04:10 UTC daily — after the Monday scrape has had its run.
+    - cron: "10 4 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+      - "scripts/check-schema-drift.mjs"
+  workflow_dispatch:
+
+concurrency:
+  group: schema-drift
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # Not being able to check is reported, not alarmed about. The scrape
+      # workflow already opens an issue for these same missing secrets, and a
+      # second daily alarm for one cause trains people to ignore both.
+      - name: Check credentials are present
+        id: creds
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "::notice::Skipping drift check — SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY repository secrets are not set."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Exit 1 is drift and fails the job. Exit 2 is "could not check", which
+      # must not read as "in step" — it is surfaced as a failure too, because a
+      # check that silently stops checking is the thing this repo keeps getting
+      # bitten by.
+      - name: Compare the repository against the live database
+        if: steps.creds.outputs.skip == 'false'
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: npm run db:drift
+
+  alert:
+    needs: drift
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the drift issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          existing=$(gh issue list --repo "$REPO" --label schema-drift --state open \
+                       --limit 1 --json number --jq '.[0].number // empty')
+
+          body=$(cat <<EOF
+          The live database no longer matches \`supabase/migrations/\`, or the check
+          could not run.
+
+          Run log: $RUN_URL — it names which structural facts differ and in which
+          direction.
+
+          Two directions, two different fixes:
+
+          - **In the live database but not in the migrations** — something was changed
+            in the Supabase dashboard, or a migration is missing from the repo. The
+            repo is the source of truth, so capture the change as a migration.
+          - **In the migrations but not in the live database** — a migration here has
+            not been applied to the project yet. Apply it.
+
+          Locally: \`DATABASE_URL=postgres://localhost/rentindex_drift npm run db:drift\`
+          EOF
+          )
+          body=$(printf '%s\n' "$body" | sed 's/^          //')
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$REPO" --body "$body"
+            echo "Commented on existing issue #$existing"
+          else
+            gh label create schema-drift --repo "$REPO" \
+              --color 5319E7 --description "The repo and the live database have diverged" 2>/dev/null || true
+            gh issue create --repo "$REPO" \
+              --title "Schema drift between the repo and the live database" \
+              --label schema-drift \
+              --body "$body"
+          fi
