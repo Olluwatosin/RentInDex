@@ -19,6 +19,48 @@ to read, not thirty minutes. Newest first.
   that reaches a real person** (waitlist email, public posts, DNS). Unchanged
   from the proposal.
 
+## Latest — 30 October
+
+PR #2 (stacked on #1): the ask-when-thin flow, plus two things found building it.
+
+**RentBot has produced zero renter rows in its entire life.** All 216 came from
+the survey (207) and the form (9). Nothing could say why — every rejection
+reason went to the console and this plan keeps runtime logs for one hour, so
+"zero rows" and "zero users" looked identical. Web Analytics is not enabled
+either. So the funnel is now tallied by outcome (`extraction_outcomes`, holding
+no transcript, no rent figure, no conversation id) and reported by
+`/api/health` and `npm run coverage`. Within days the question answers itself.
+
+**The ask now names the cell.** `cell_progress()` reports how many renters have
+reported an area-and-type and how many more it needs — something `rent_lookup`
+cannot expose, because below the bar it returns the wider fallback and the
+cell's own count vanishes. "2 renters have told me what they pay for a 2 bedroom
+flat in Yaba. One more and I can give Yaba its own number." The variant shown to
+someone who already gave their rent deliberately does not thank them or claim a
+save, because the save happens later and can still be refused.
+
+**And a correctness bug in the pricing engine.** `area_matches()` matched any
+substring anywhere, including mid-word — `'nowhereville' LIKE '%vi%'` is true.
+Live pairs being merged into one neighbourhood band: Ado→Badore (21 listings),
+Idado, Alagbado, Agbado; Ojo→Ojodu Berger (11), Ojodu (9), Ojota; Aba→Yaba,
+Asaba, Alaba. Ado is Lekki-adjacent, Agbado is far mainland; Ojo is past Trade
+Fair, Ojodu Berger is Ikeja money. Fixed with a word boundary — length is the
+wrong guard, since Uyo (97 listings), Jos, Apo, Ife and Ojo are real
+three-letter place names. Measured first: of 450 areas, 10 change, 85 spurious
+matches drop, 98.8% are kept, and every removed pair was an error.
+
+Both migrations are **already applied to production** and verified there, since
+the feature is inert without them.
+
+### Worth your attention
+
+- **There is no automated path from `supabase/migrations/` to production.** A
+  Vercel deploy does not run migrations, so I applied these two by hand. The
+  repo and the project are in step today; nothing keeps them that way except
+  someone remembering. Worth a deploy step or a `supabase db push` in CI.
+- **`areas.aliases` is still unused**, and now it has a job: "VI" for Victoria
+  Island, and every other abbreviation renters actually type.
+
 ## The biggest thing I found
 
 **The crowd half of the index is structurally dormant, and that is the

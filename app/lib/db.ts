@@ -134,6 +134,88 @@ export async function countListings(): Promise<number> {
   return total ? parseInt(total, 10) : 0;
 }
 
+// ─── the extraction funnel ───────────────────────────────────────────────────
+//
+// RentBot has produced zero renter rows, ever. The extraction endpoint guards
+// carefully and returns a precise reason on every rejection, but those reasons
+// only reached the console — and runtime logs are kept for one hour on this
+// plan, so "zero rows" was indistinguishable from "zero users". Same shape as
+// the scrape that failed silently for seven weeks: a careful failure nobody
+// could see.
+
+/** Tally one extraction outcome. Never throws — a lost tally is not worth a failed save. */
+export async function recordExtractionOutcome(outcome: string): Promise<void> {
+  if (!dbConfigured()) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/rpc/extraction_record`, {
+      method: "POST",
+      headers: headers(),
+      cache: "no-store",
+      body: JSON.stringify({ p_outcome: outcome }),
+    });
+  } catch {
+    /* best-effort: the measurement must never cost us the thing measured */
+  }
+}
+
+export interface ExtractionOutcome {
+  outcome: string;
+  n: number;
+}
+
+export async function extractionFunnel(days = 30): Promise<ExtractionOutcome[]> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/extraction_funnel`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({ p_days: days }),
+  });
+  if (!res.ok) throw new Error(`extractionFunnel failed (${res.status})`);
+  return (await res.json()) as ExtractionOutcome[];
+}
+
+// ─── cell progress ───────────────────────────────────────────────────────────
+
+export interface CellProgress {
+  state: string;
+  area: string;
+  property_type: string | null;
+  /** Renter rows for this exact area and type — the cell that produces a band. */
+  typed_n: number;
+  /** Renter rows for the area at any type. */
+  area_n: number;
+  min_n: number;
+  /** How many more typed rows before this cell can answer on its own. */
+  needed: number;
+  has_band: boolean;
+}
+
+// How close is this area and type to having a renter band of its own?
+//
+// rent_lookup answers with a band or with nothing, so below the bar a cell's own
+// count is invisible — and that count is exactly what makes an ask worth
+// answering. "One more renter in Yaba and Yaba gets its own number" is true,
+// specific and finishable. "Help us grow our data" is none of those.
+export async function cellProgress(params: {
+  state: string;
+  area: string;
+  propertyType?: string | null;
+}): Promise<CellProgress | null> {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/cell_progress`, {
+    method: "POST",
+    headers: headers(),
+    cache: "no-store",
+    body: JSON.stringify({
+      p_state: params.state,
+      p_area: params.area,
+      p_property_type: params.propertyType ?? null,
+    }),
+  });
+  if (!res.ok) return null;
+  const val = await res.json();
+  return val && typeof val === "object" ? (val as CellProgress) : null;
+}
+
 export interface IndexFreshness {
   /** When the most recent listing entered the index. */
   newestListing: string | null;
