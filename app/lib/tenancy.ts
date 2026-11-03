@@ -278,9 +278,174 @@ export function checkAdvanceRent(q: AdvanceRentQuery): Finding {
 
 // ─── rent increase ───────────────────────────────────────────────────────────
 
+/**
+ * What the local market actually looks like, handed in rather than fetched.
+ *
+ * This file stays pure — no database, no Next — so the rules engine can be
+ * tested exhaustively and reused by the API, the share card and the WhatsApp
+ * bot without each growing its own copy. The caller does the lookup; this
+ * module only reasons about the result.
+ */
+export interface MarketEvidence {
+  /** Where the band really comes from. A town figure is never labelled as an area. */
+  level: "area" | "city" | "state";
+  /** True when the band mixes property types rather than pricing one. */
+  anyType: boolean;
+  /** What renters report paying, or what places are advertised at. Not the same thing. */
+  source: "actual" | "asking";
+  p25: number;
+  p50: number;
+  p75: number;
+  /** Sample size behind the band. */
+  n: number;
+  area: string | null;
+  propertyType: string | null;
+}
+
 export interface IncreaseQuery {
   currentRent: number;
   proposedRent: number;
+  /** Optional. Without it this answers from the statute alone, exactly as before. */
+  market?: MarketEvidence | null;
+}
+
+const money = (n: number) => "₦" + Math.round(n).toLocaleString("en-NG");
+
+/**
+ * Turn a market band into the comparison s.37(2)(a) actually asks for.
+ *
+ * Note what this deliberately does NOT do: it does not report how much rents
+ * have *moved*. The section asks the court to weigh "the general level of rents
+ * in the locality", which is a level, not a change — and our listings are three
+ * snapshots a few weeks apart whose area and source composition differs between
+ * runs, so any year-on-year figure we quoted would be an artefact of sampling
+ * rather than of the market. The statute and the honest reading of our own data
+ * happen to want the same thing here.
+ *
+ * Returns null when the evidence cannot carry the argument, which is a real
+ * answer and not a failure.
+ */
+function levelOfRents(
+  q: IncreaseQuery
+): { detail: string[]; actions: string[] } | null {
+  const m = q.market;
+  if (!m) return null;
+
+  // A band this dispersed is not "a level of rents" — it is the whole market.
+  // Yaba's all-types asking band runs ₦1.6m to ₦7.25m, which is self-cons
+  // priced beside four-bedrooms. Quoting a spread like that against one flat
+  // tells a court nothing, and tells the renter something worse than nothing.
+  const TOO_DISPERSED = 3;
+
+  // When the comparison cannot be made honestly, say so and say why. A refusal
+  // is a real answer here; a bad comparison is not.
+  //
+  // This is the same discipline the rent verdict already applies — it refuses
+  // to call a rent fair off a band that lost the property-type filter — and it
+  // matters more in this file, not less. The output of this function is what
+  // someone takes to a Magistrate's Court.
+  const refuse = (why: string) => ({
+    detail: [`We can't give you that comparison from our own data yet: ${why}`],
+    // No actions: the generic "go and gather comparables" line stays, because
+    // that is exactly what the renter now has to do.
+    actions: [],
+  });
+
+  if (m.level === "state") {
+    return refuse(
+      `we hold rent data for ${
+        m.area ?? "your area"
+      } only at Lagos level, and s.37(2)(a) asks about your locality or one like it — not the state. You would need comparables from nearby streets and estates.`
+    );
+  }
+
+  // The renter told us what kind of home they have and the sample was too thin
+  // to honour it, so the band prices other people's homes. Telling someone
+  // their 75% increase "sits below the range" off a band that includes
+  // four-bedroom houses is how they lose an argument they should have won.
+  if (m.anyType && m.propertyType) {
+    return refuse(
+      `we don't hold enough ${m.propertyType} rents for ${
+        m.area ?? "your area"
+      } yet, and the figures we do have cover every kind of home there — from single rooms to large houses — so they say nothing about a ${m.propertyType}.`
+    );
+  }
+
+  if (m.p25 > 0 && m.p75 / m.p25 > TOO_DISPERSED) {
+    return refuse(
+      `the rents we hold for ${
+        m.area ?? "your area"
+      } are spread too widely to call a general level — ${money(m.p25)} to ${money(
+        m.p75
+      )} — which describes the whole local market rather than places like yours.`
+    );
+  }
+
+  const where = m.level === "area" ? (m.area ?? "your area") : `${m.area ?? "your town"} as a whole`;
+  const typed = m.anyType
+    ? " across all property types, so weigh it against places like yours"
+    : m.propertyType
+    ? ` for ${m.propertyType}s`
+    : "";
+
+  const sits =
+    q.proposedRent > m.p75
+      ? "above that range"
+      : q.proposedRent < m.p25
+      ? "below that range"
+      : "inside that range";
+
+  const detail: string[] = [];
+
+  if (m.source === "actual") {
+    detail.push(
+      `Here is that comparison. Renters in ${where} report paying ${money(m.p25)}–${money(
+        m.p75
+      )} a year${typed} — ${m.n} ${m.n === 1 ? "report" : "reports"}. The ${money(
+        q.proposedRent
+      )} you have been asked for sits ${sits}.`
+    );
+  } else {
+    // Asking prices are the top of the market, not the middle of it, and our
+    // scraped sample skews to serviced flats and estates. Handing a renter an
+    // advertised range as though it were the level of rents would overstate
+    // what their neighbours pay and weaken the very argument it is meant to
+    // support.
+    detail.push(
+      `The closest comparison we have is advertised prices, not what people pay: places in ${where} are listed at ${money(
+        m.p25
+      )}–${money(m.p75)} a year${typed} — ${m.n} ${m.n === 1 ? "listing" : "listings"}. The ${money(
+        q.proposedRent
+      )} you have been asked for sits ${sits}.`,
+      `Treat that as the ceiling rather than the going rate. Advertised prices run above what renters actually pay, and the section asks about rents, so a figure from real tenancies carries more weight than a listing does.`
+    );
+  }
+
+  if (m.level === "city") {
+    detail.push(
+      `That figure is town-wide rather than ${
+        m.area ?? "your street"
+      } itself. s.37(2)(a) says "the locality or a similar locality", so it is a starting point for the comparison, not the finished argument.`
+    );
+  }
+
+  if (m.n < 5) {
+    detail.push(
+      `It rests on ${m.n} ${m.n === 1 ? "record" : "records"}, which is thin. Gather a few comparable places yourself before you rely on it.`
+    );
+  }
+
+  const actions: string[] = [];
+  if (q.proposedRent > m.p75) {
+    actions.push(
+      `The figures above are the comparison the court looks at first, and they sit in your favour. They are not a guarantee — s.37(2) has other grounds too, and your agreement may affect what you can argue.`
+    );
+  }
+  actions.push(
+    `Take the figures with you, not just the argument: s.37(2)(a) is a comparison, and the court will want comparables rather than an assertion.`
+  );
+
+  return { detail, actions };
 }
 
 /**
@@ -306,6 +471,10 @@ export function checkIncrease(q: IncreaseQuery): Finding {
   // of thing they would act on.
   const isIncrease = q.proposedRent > q.currentRent;
 
+  // Null when we have no usable local evidence, which leaves every line below
+  // exactly as it was before this existed.
+  const evidence = levelOfRents(q) ?? { detail: [], actions: [] };
+
   return {
     verdict: "depends",
     headline: !isIncrease
@@ -317,6 +486,13 @@ export function checkIncrease(q: IncreaseQuery): Finding {
       "Lagos law sets no maximum percentage. Anyone who tells you increases are capped at some figure is wrong, and acting on that will cost you.",
       "What the Law does give you is s.37: as an existing tenant you may apply to the Magistrate's Court (Form TL 11) for an order declaring the increase unreasonable. If the court agrees, it can substitute a specific amount.",
       "The first thing the court weighs is the general level of rents in your locality or a similar one. That is a comparison — which means evidence of what people nearby actually pay is the heart of your case.",
+      // The index, inserted exactly where the statute asks for it. This is the
+      // join the whole product rests on: s.37(2)(a) names the evidence, and the
+      // index is the evidence. Nothing here changes the verdict, the headline or
+      // the citations — an increase is never automatically illegal, and the share
+      // card renders only those three, so a forwarded card still matches the page
+      // that produced it whether or not we had local data.
+      ...evidence.detail,
       "And critically: once you have filed, your landlord may not eject you while the case is pending.",
     ],
     citations: [
@@ -334,7 +510,13 @@ export function checkIncrease(q: IncreaseQuery): Finding {
       ),
     ],
     actions: [
-      "Gather what comparable places nearby actually rent for — that is the court's first ground under s.37(2)(a).",
+      // Only tell someone to go and find comparables when we could not hand
+      // them any. Asking for what we just supplied reads as not listening.
+      ...(evidence.actions.length
+        ? evidence.actions
+        : [
+            "Gather what comparable places nearby actually rent for — that is the court's first ground under s.37(2)(a).",
+          ]),
       "Keep the increase demand in writing, and your record of what you paid before.",
       "Note the words 'subject to any agreement to the contrary' — check whether your tenancy agreement signs this right away.",
     ],
@@ -423,6 +605,11 @@ export interface TenancyQuery {
   threatened?: boolean;
   utilitiesCut?: boolean;
   hasCourtOrder?: boolean;
+  /**
+   * Local rent evidence for the increase question. Optional: without it the
+   * answer is the statute alone, which is what it was before.
+   */
+  market?: MarketEvidence | null;
 }
 
 const TENANCY_TYPES: TenancyType[] = [
@@ -471,7 +658,11 @@ export function buildFindings(q: TenancyQuery): {
         q.currentRent > 0
       ) {
         findings.push(
-          checkIncrease({ currentRent: q.currentRent, proposedRent: q.proposedRent })
+          checkIncrease({
+            currentRent: q.currentRent,
+            proposedRent: q.proposedRent,
+            market: q.market ?? null,
+          })
         );
       }
       break;
