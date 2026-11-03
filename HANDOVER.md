@@ -19,7 +19,40 @@ to read, not thirty minutes. Newest first.
   that reaches a real person** (waitlist email, public posts, DNS). Unchanged
   from the proposal.
 
-## Latest — 1 November
+## Latest — 3 November
+
+The increase checker now answers from the index as well as the statute (PR #5,
+merged). s.37(2)(a) tells the court to weigh "the general level of rents in the
+locality" first; we hold those figures, so the answer carries the comparison
+instead of telling the renter to go and find it.
+
+It refuses the comparison, with its reason, in three cases — a state-level band
+is not "the locality"; an all-types band cannot speak to the kind of home the
+renter named; quartiles spanning more than 3x are the whole local market rather
+than a level. That shape came from the first real run: Yaba, 2-bedroom, ₦800k →
+₦1.4m produced "sits below that range" against an all-types asking band of
+₦1.6m–₦7.25m, which a renter facing a 75% increase reads as *your increase is
+reasonable*. Worse than no comparison.
+
+Across the best-covered Lagos areas and five property types, 24 of 40
+combinations give a usable comparison and 16 are refused. **Every usable one is
+asking-price data** — the dormant crowd half showing up again, and the strongest
+argument yet for concentrating submissions.
+
+Nothing in it changes the verdict, headline or citations, so a forwarded share
+card still matches the page. There is a test on that.
+
+Running totals: 93 unit tests, 105 database assertions.
+
+### The scrape alarm fired on its own
+
+Issue #4 was opened automatically by the 2 November scheduled run — the first
+Monday after the alerting merged. Seven weeks of silent failures now file
+themselves. It still needs the secrets to actually succeed; the index was last
+written on 24 October and `/api/health` turns red at 14 days, so around
+**7 November** the staleness check will start reporting it.
+
+## Earlier — 1 November
 
 PRs #1 and #2 are **merged to main**. PR #3 is open: a schema drift detector.
 
