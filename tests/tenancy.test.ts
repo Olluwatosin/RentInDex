@@ -361,3 +361,252 @@ test("the 2025 Bill is presented as not in force", () => {
   assert.ok(LAGOS_TENANCY_BILL_2025.warning.includes("Tenancy Law 2011 is what governs"));
   assert.ok(LAGOS_TENANCY_BILL_2025.proposals.some((p) => p.includes("5%")));
 });
+
+// ─── s.37(2)(a) answered with evidence, not just cited ───────────────────────
+//
+// The section tells the court to weigh "the general level of rents in the
+// locality". Citing that and then telling the renter to go and find the figures
+// themselves is half an answer, so the engine now accepts local rent evidence
+// and states the comparison. These tests guard the two things that could go
+// wrong: quoting a figure the data cannot support, and changing the parts of
+// the finding a forwarded share card renders.
+
+import { checkIncrease as increase, type MarketEvidence } from "../app/lib/tenancy";
+
+const band = (over: Partial<MarketEvidence> = {}): MarketEvidence => ({
+  level: "area",
+  anyType: false,
+  source: "actual",
+  p25: 900_000,
+  p50: 1_000_000,
+  p75: 1_100_000,
+  n: 12,
+  area: "Yaba",
+  propertyType: "2 bedroom flat",
+  ...over,
+});
+
+const text = (f: ReturnType<typeof increase>) =>
+  [...f.detail, ...(f.actions ?? [])].join(" ");
+
+test("without evidence the answer is exactly what it was before", () => {
+  const withNone = increase({ currentRent: 800_000, proposedRent: 1_400_000 });
+  const withNull = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: null });
+  assert.deepEqual(withNull, withNone);
+  assert.ok(text(withNone).includes("Gather what comparable places nearby actually rent for"));
+});
+
+test("evidence never changes what a forwarded card shows", () => {
+  // The share card renders the verdict, the headline and the first citation and
+  // nothing else. If evidence touched any of those, a card could disagree with
+  // the page that produced it depending on whether we happened to hold local
+  // data — which is the exact failure the single-engine design exists to stop.
+  const plain = increase({ currentRent: 800_000, proposedRent: 1_400_000 });
+  for (const m of [
+    band(),
+    band({ level: "city" }),
+    band({ level: "state" }),
+    band({ source: "asking" }),
+    band({ anyType: true }),
+    band({ n: 2 }),
+  ]) {
+    const withEvidence = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: m });
+    assert.equal(withEvidence.verdict, plain.verdict);
+    assert.equal(withEvidence.headline, plain.headline);
+    assert.deepEqual(withEvidence.citations, plain.citations);
+  }
+});
+
+test("an increase above the local range is stated as such, with the sample behind it", () => {
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band() });
+  const t = text(f);
+  assert.match(t, /Renters in Yaba report paying ₦900,000–₦1,100,000 a year/);
+  assert.match(t, /12 reports/);
+  assert.match(t, /₦1,400,000 you have been asked for sits above that range/);
+});
+
+test("an increase inside the local range is not dressed up as a win", () => {
+  const f = increase({ currentRent: 800_000, proposedRent: 1_000_000, market: band() });
+  const t = text(f);
+  assert.match(t, /sits inside that range/);
+  assert.ok(!/in your favour/.test(t), t);
+});
+
+test("and below the range says so plainly", () => {
+  const f = increase({ currentRent: 500_000, proposedRent: 800_000, market: band() });
+  assert.match(text(f), /sits below that range/);
+});
+
+test("when the figures favour the renter, that is said without promising an outcome", () => {
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band() });
+  const t = text(f);
+  assert.match(t, /sit in your favour/);
+  assert.match(t, /not a guarantee/);
+  assert.match(t, /other grounds/);
+});
+
+test("asking prices are never passed off as what people pay", () => {
+  // Our scraped listings skew to serviced flats and estates, so an advertised
+  // range overstates the local level and would weaken the argument it is meant
+  // to support.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ source: "asking" }),
+  });
+  const t = text(f);
+  assert.match(t, /advertised prices, not what people pay/);
+  assert.match(t, /are listed at/);
+  assert.match(t, /ceiling rather than the going rate/);
+  assert.ok(!/report paying/.test(t), t);
+});
+
+test("a town-wide figure is labelled as one, against the section's own words", () => {
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ level: "city" }),
+  });
+  const t = text(f);
+  assert.match(t, /town-wide rather than Yaba itself/);
+  assert.match(t, /the locality or a similar locality/);
+  assert.match(t, /starting point/);
+});
+
+test("a state-wide figure is refused rather than quoted as local evidence", () => {
+  // A Lagos-wide median tells a Yaba renter nothing about Yaba, and s.37(2)(a)
+  // asks about the locality. Saying we cannot supply the comparison is a real
+  // answer; supplying a bad one is not.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ level: "state" }),
+  });
+  const t = text(f);
+  assert.match(t, /can't give you that comparison from our own data yet/);
+  assert.match(t, /not the state/);
+  // No figure from the band may appear.
+  assert.ok(!t.includes("900,000"), t);
+  assert.ok(!t.includes("1,100,000"), t);
+  // And the renter is still told to gather their own.
+  assert.match(t, /Gather what comparable places nearby actually rent for/);
+});
+
+test("an all-types band is refused once the renter has told us their type", () => {
+  // The real case that forced this rule. Yaba's only area-level band is asking
+  // prices across every kind of home, ₦1.6m to ₦7.25m. Against it a renter's
+  // ₦1.4m "sits below the range", which reads as *your 75% increase is
+  // reasonable* — off a sample that includes four-bedroom houses. Worse than
+  // giving no comparison at all, and the rent verdict already refuses the same
+  // shape of band for the same reason.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ anyType: true }),
+  });
+  const t = text(f);
+  assert.match(t, /don't hold enough 2 bedroom flat rents/);
+  assert.match(t, /say nothing about a 2 bedroom flat/);
+  assert.ok(!/sits below that range/.test(t), t);
+  assert.ok(!/sits inside that range/.test(t), t);
+  // And they are told to go and find comparables, since we could not supply any.
+  assert.match(t, /Gather what comparable places nearby actually rent for/);
+});
+
+test("an all-types band is usable when the renter never named a type", () => {
+  // Then it is exactly what s.37(2)(a) asks for — the general level of rents in
+  // the locality, which is a question about the locality and not about one kind
+  // of home. Labelled, so nobody reads it as a price for their own flat.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ anyType: true, propertyType: null }),
+  });
+  assert.match(text(f), /across all property types, so weigh it against places like yours/);
+});
+
+test("a band too dispersed to be a 'level of rents' is refused", () => {
+  // ₦1.6m to ₦7.25m is not a level, it is the whole market. Quoting that spread
+  // against one flat tells a court nothing.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 1_400_000,
+    market: band({ p25: 1_600_000, p50: 3_000_000, p75: 7_250_000, propertyType: null }),
+  });
+  const t = text(f);
+  assert.match(t, /spread too widely to call a general level/);
+  assert.match(t, /₦1,600,000 to ₦7,250,000/);
+  assert.ok(!/sits (above|inside|below) that range/.test(t), t);
+});
+
+test("a band at the edge of the dispersion limit is still used", () => {
+  // The guard must not quietly swallow ordinary bands: a 2.5x spread between
+  // the quartiles is normal for a real neighbourhood.
+  const f = increase({
+    currentRent: 800_000,
+    proposedRent: 3_000_000,
+    market: band({ p25: 1_000_000, p50: 1_600_000, p75: 2_500_000 }),
+  });
+  assert.match(text(f), /sits above that range/);
+});
+
+test("every refusal still leaves the statutory answer whole", () => {
+  for (const m of [
+    band({ level: "state" }),
+    band({ anyType: true }),
+    band({ p25: 1_000_000, p75: 9_000_000 }),
+  ]) {
+    const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: m });
+    const t = text(f);
+    assert.equal(f.verdict, "depends");
+    assert.match(t, /no maximum percentage/);
+    assert.match(t, /Form TL 11/);
+    assert.match(t, /may not eject you while the case is pending/);
+    assert.deepEqual(f.citations.map((c) => c.section), ["s.37(1)", "s.37(2)(a)", "s.37(4)"]);
+  }
+});
+
+test("a thin sample is called thin", () => {
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band({ n: 3 }) });
+  const t = text(f);
+  assert.match(t, /3 records, which is thin/);
+  assert.match(t, /Gather a few comparable places yourself/);
+});
+
+test("one record reads as one record", () => {
+  const t = text(increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band({ n: 1 }) }));
+  assert.match(t, /1 report\b/);
+  assert.match(t, /1 record,/);
+});
+
+test("supplying the comparison replaces the instruction to go and find it", () => {
+  // Asking someone to fetch what we just handed them reads as not listening.
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band() });
+  const t = text(f);
+  assert.ok(!/Gather what comparable places nearby actually rent for/.test(t), t);
+  assert.match(t, /Take the figures with you/);
+});
+
+test("the statutory lines survive alongside the evidence", () => {
+  // The evidence is inserted into the argument, not in place of it.
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: band() });
+  const t = text(f);
+  assert.match(t, /no maximum percentage/);
+  assert.match(t, /Form TL 11/);
+  assert.match(t, /may not eject you while the case is pending/);
+  assert.deepEqual(f.citations.map((c) => c.section), ["s.37(1)", "s.37(2)(a)", "s.37(4)"]);
+});
+
+test("no figure appears that did not come from the band or the query", () => {
+  const m = band();
+  const f = increase({ currentRent: 800_000, proposedRent: 1_400_000, market: m });
+  const allowed = new Set(
+    [m.p25, m.p75, m.n, 1_400_000, 75].map(String).concat(["2", "37", "11", "2011"])
+  );
+  // Strip the section references and the known prose numbers, then check what's left.
+  const figures = text(f).match(/[\d,]{3,}/g) ?? [];
+  for (const raw of figures) {
+    const n = raw.replace(/,/g, "");
+    assert.ok(allowed.has(n), `unexpected figure ${raw} in the answer`);
+  }
+});

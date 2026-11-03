@@ -66,6 +66,20 @@ const SITUATIONS: { key: Situation; icon: string; title: string; sub: string }[]
   },
 ];
 
+// The property types the index actually holds, written exactly as it stores
+// them so norm_ptype() matches without a translation layer in between. Ordered
+// by how much data stands behind each, and optional — s.37(2)(a) asks about the
+// general level of rents in the locality, which an all-types band answers
+// honestly, so this only ever sharpens the comparison.
+const PROPERTY_TYPES = [
+  { key: "2 Bedroom flat", label: "2 bed" },
+  { key: "3 Bedroom flat", label: "3 bed" },
+  { key: "1 Bedroom flat", label: "1 bed" },
+  { key: "4+ bedroom", label: "4+ bed" },
+  { key: "Mini flat", label: "Mini flat" },
+  { key: "Self-contained", label: "Self-con" },
+];
+
 const TENANCY_TYPES = [
   { key: "monthly", label: "Monthly" },
   { key: "quarterly", label: "Quarterly" },
@@ -91,6 +105,7 @@ export default function RightsChecker() {
   const [situation, setSituation] = useState<Situation | null>(null);
   const [area, setArea] = useState("");
   const [tenancyType, setTenancyType] = useState("yearly");
+  const [propertyType, setPropertyType] = useState("");
   const [agreementStatesPeriod, setAgreementStatesPeriod] = useState(false);
   const [isSittingTenant, setIsSittingTenant] = useState(false);
   const [monthsDemanded, setMonthsDemanded] = useState("24");
@@ -112,6 +127,7 @@ export default function RightsChecker() {
       const q = new URLSearchParams({ situation: s });
       if (area.trim()) q.set("area", area.trim());
       if (s === "notice" || s === "advance_rent") q.set("type", tenancyType);
+      if (s === "increase" && propertyType) q.set("ptype", propertyType);
       if (s === "advance_rent") {
         q.set("months", String(toNumber(monthsDemanded)));
         if (isSittingTenant) q.set("sitting", "1");
@@ -130,8 +146,8 @@ export default function RightsChecker() {
       }
       return q.toString();
     },
-    [area, tenancyType, monthsDemanded, isSittingTenant, agreementStatesPeriod,
-     currentRent, proposedRent, harassment]
+    [area, tenancyType, propertyType, monthsDemanded, isSittingTenant,
+     agreementStatesPeriod, currentRent, proposedRent, harassment]
   );
 
   const reset = () => {
@@ -149,6 +165,7 @@ export default function RightsChecker() {
 
     setSituation(s);
     setArea(params.get("area") ?? "");
+    setPropertyType(params.get("ptype") ?? "");
     setTenancyType(params.get("type") ?? "yearly");
     setMonthsDemanded(params.get("months") ?? "24");
     setIsSittingTenant(params.get("sitting") === "1");
@@ -185,6 +202,7 @@ export default function RightsChecker() {
           state: "Lagos",
           area: area.trim() || null,
           tenancyType,
+          propertyType: propertyType || null,
           questions: [s],
           agreementStatesPeriod,
           isSittingTenant,
@@ -388,6 +406,35 @@ export default function RightsChecker() {
                   </span>
                 </label>
               </>
+            )}
+
+            {situation === "increase" && (
+              <div>
+                <label className="block text-sm font-medium">
+                  What kind of place?{" "}
+                  <span className="font-normal text-white/50">(optional)</span>
+                </label>
+                <p className="mt-1 text-xs text-white/50">
+                  Lets us compare your increase against what people pay for places like
+                  yours, which is the first thing the court weighs.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {PROPERTY_TYPES.map((t) => (
+                    <button
+                      key={t.key}
+                      onClick={() => setPropertyType(propertyType === t.key ? "" : t.key)}
+                      aria-pressed={propertyType === t.key}
+                      className={`rounded-full px-3.5 py-1.5 text-sm transition ${
+                        propertyType === t.key
+                          ? "bg-[#F59E0B] font-semibold text-white"
+                          : "bg-white/10 text-white/80 hover:bg-white/20"
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {situation === "increase" && (
